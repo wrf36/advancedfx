@@ -2204,6 +2204,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 	{ 
 		case DLL_PROCESS_ATTACH:
 		{
+			/*
 			wchar_t * pSzInsecureArg = wcsstr(GetCommandLineW(), L" -insecure");
 			if(NULL == pSzInsecureArg || !(pSzInsecureArg += wcslen(L" -insecure"), (L' ' == *pSzInsecureArg ||  L'\0' == *pSzInsecureArg)))
 			{
@@ -2221,6 +2222,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 				}
 				break;
 			}
+			*/
 
 #ifdef _DEBUG
 			MessageBox(0,"DLL_PROCESS_ATTACH","MDT_DEBUG",MB_OK);

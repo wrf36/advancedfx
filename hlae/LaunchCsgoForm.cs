@@ -47,7 +47,7 @@ namespace AfxGui
                 textBoxGfxWidth.Text = value.GfxWidth.ToString();
                 textBoxGfxHeight.Text = value.GfxHeight.ToString();
                 checkBoxGfxFull.Checked = value.GfxFull;
-                checkBoxAvoidVac.Checked = true;
+                checkBoxAvoidVac.Checked = value.AvoidVac;
                 textBoxCustomCmd.Text = value.CustomLaunchOptions;
                 checkBoxRemeber.Checked = value.RememberChanges;
 
@@ -58,6 +58,7 @@ namespace AfxGui
 
         private void checkBoxAvoidVac_Click(object sender, EventArgs e)
         {
+            /*
             MessageBox.Show(
                 "HLAE users requested this option to be made mandatory.\n"
                 +"The hook will refuse to work without it, thus it can not be removed.",
@@ -67,8 +68,8 @@ namespace AfxGui
             );
 
             this.checkBoxAvoidVac.Checked = true;
+            */
 
-            /*
             if (!this.checkBoxAvoidVac.Checked)
             {
                 DialogResult dr = MessageBox.Show(
@@ -86,7 +87,6 @@ namespace AfxGui
                     this.checkBoxAvoidVac.Checked = true;
                 }
             }
-            */
         }
 
         private void EnableMmcfg(bool enabled)
