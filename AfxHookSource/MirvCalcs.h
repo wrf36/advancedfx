@@ -76,8 +76,6 @@ public:
 	virtual void Console_Edit(IWrpCommandArgs * args) abstract = 0;
 };
 
-
-
 class IMirvBoolCalc abstract
 {
 public:
@@ -86,7 +84,7 @@ public:
 
 	virtual int GetRefCount(void) abstract = 0;
 
-	virtual bool CalcBool(void) abstract = 0;
+	virtual bool CalcBool(bool & outResult) abstract = 0;
 
 	virtual  char const * GetName(void) abstract = 0;
 
@@ -94,6 +92,24 @@ public:
 
 	virtual void Console_Edit(IWrpCommandArgs * args) abstract = 0;
 };
+
+class IMirvIntCalc abstract
+{
+public:
+	virtual void AddRef(void) abstract = 0;
+	virtual void Release(void) abstract = 0;;
+
+	virtual int GetRefCount(void) abstract = 0;
+
+	virtual bool CalcInt(int & outResult) abstract = 0;
+
+	virtual  char const * GetName(void) abstract = 0;
+
+	virtual void Console_Print(void) abstract = 0;
+
+	virtual void Console_Edit(IWrpCommandArgs * args) abstract = 0;
+};
+
 
 class CMirvHandleCalcs
 {
@@ -213,6 +229,7 @@ public:
 
 	IMirvBoolCalc * NewHandleCalc(char const * name, IMirvHandleCalc * handle);
 	IMirvBoolCalc * NewVecAngCalc(char const * name, IMirvVecAngCalc * vecAng);
+	IMirvBoolCalc * NewAliveCalc(char const * name, IMirvHandleCalc * vecAng);
 	//IMirvBoolCalc * NewAndCalc(char const * name, IMirvBoolCalc * a, IMirvBoolCalc * b);
 	//IMirvBoolCalc * NewOrCalc(char const * name, IMirvBoolCalc * a, IMirvBoolCalc * b);
 	//IMirvBoolCalc * NewNotCalc(char const * name, IMirvBoolCalc * a);
@@ -228,4 +245,26 @@ private:
 };
 
 extern CMirvBoolCalcs g_MirvBoolCalcs;
+
+
+class CMirvIntCalcs
+{
+public:
+	~CMirvIntCalcs();
+
+	IMirvIntCalc * GetByName(char const * name);
+
+	IMirvIntCalc * NewTeamNumberCalc(char const * name, IMirvHandleCalc * handle);
+
+	bool Console_CheckName(char const * name);
+	void Console_Remove(char const * name);
+	void Console_Print(void);
+
+private:
+	std::list<IMirvIntCalc *> m_Calcs;
+
+	void GetIteratorByName(char const * name, std::list<IMirvIntCalc *>::iterator & outIt);
+};
+
+extern CMirvIntCalcs g_MirvIntCalcs;
 

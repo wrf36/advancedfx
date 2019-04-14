@@ -19,7 +19,13 @@ namespace AfxInterop {
 	void BeforeFrameStart();
 
 	/// <remarks>Must be called from engine thread only.</remarks>
-	void BeforeHud();
+	void BeforeFrameRenderStart();
+
+	/// <remarks>Must be called from engine thread only.</remarks>
+	void AfterFrameRenderStart();
+
+	/// <remarks>Must be called from engine thread only.</remarks>
+	void BeforeHud(const SOURCESDK::CViewSetup_csgo & view);
 
 	/// <remarks>Must be called from engine thread only.</remarks>
 	void Shutdown();
@@ -32,13 +38,23 @@ namespace AfxInterop {
 
 	int GetFrameCount();
 
-	bool GetFrameInfoSent();
+	/// <param name="Rx">Pitch</param>
+	/// <param name="Ry">Yaw</param>
+	/// <param name="Rz">Roll</param>
+	/// <returns>true if values are overriden.</returns>
+	bool OnRenderView(float & Tx, float & Ty, float & Tz, float & Rx, float & Ry, float & Rz, float & Fov);
 
 	//
 	// Drawing thread:
 
+	void DrawingThreadPrepareDraw(int frameCount);
+
+	void DrawingThreadFinished();
+
+	bool GetDoingHud(void);
+
 	/// <remarks>Must be called from drawing thread only.</remarks>
-	void DrawingThreadBeforeHud(int frameCount, bool frameInfoSent, const SOURCESDK::CViewSetup_csgo & view);
+	void DrawingThreadBeforeHud();
 
 	void OnCreatedSurface(IAfxInteropSurface * surface);
 
