@@ -165,37 +165,9 @@ void Shared_Direct3DDevice9_EndScene()
 	AfxHookSource::Gui::On_Direct3DDevice9_EndScene();
 }
 
-void Shared_Direct3DDevice9_Present(bool deviceLost, bool presentBlocked)
-{
-	AfxHookSource::Gui::On_Direct3DDevice9_Present(deviceLost);
-
-#ifdef AFX_MIRV_PGL
-	if(!presentBlocked) MirvPgl::DrawingThread_UnleashData();
-#endif
-}
-
-void Shared_Direct3DDevice9_Reset_Before()
-{
-#ifdef AFX_MIRV_PGL
-	MirvPgl::D3D9_Reset();
-#endif
-
-	AfxHookSource::Gui::On_Direct3DDevice9_Reset_Before();
-
-	g_CampathDrawer.Reset();
-}
-
-void Shared_Direct3DDevice9_Reset_After()
-{
-	AfxHookSource::Gui::On_Direct3DDevice9_Reset_After();
-}
-
 ULONG g_NewDirect3DDevice9_RefCount = 1;
 IDirect3DDevice9 * g_OldDirect3DDevice9 = nullptr;
-
-ULONG g_NewDirect3DDevice9Ex_RefCount = 1;
 IDirect3DDevice9Ex * g_OldDirect3DDevice9Ex = nullptr;
-
 
 // CAfxDirect3DManaged /////////////////////////////////////////////////////////
 
@@ -213,102 +185,34 @@ public:
 		}
 	}
 
-	static void AfxDevicePresented()
-	{
-		/*
-		// Get rid of the old ones:
-
-		while (!m_Lru.empty())
-		{
-			typename Instance_t * instance = m_Lru.back();
-
-			// Only at least 4 frames old:
-			if (!(std::abs(m_PresentNr - instance->m_MyPresentNr) >= 0b10000))
-				break;
-
-			m_InstanceToLruIt.erase(instance);
-			m_Lru.pop_back();
-		}
-
-		m_PresentNr++;
-		*/
-	}
-
 	CAfxDirect3DManaged()
 	{
-		/*
-		m_DirtyCount = 0;
-		m_MyPresentNr = m_PresentNr;
-		*/
 		m_Instances.insert(this);
 	}
 
 	T * AfxGetOrCreateUnmanaged(void)
 	{
-		/*
-		m_MyPresentNr = m_PresentNr;
-
-		typename InstanceToLruIt_t::iterator itLruIt = m_InstanceToLruIt.find(this);
-		if (itLruIt != m_InstanceToLruIt.end())
-		{
-			m_Lru.erase(itLruIt->second);
-			itLruIt->second = m_Lru.insert(m_Lru.begin(), this);
-		}
-		else
-		{
-			m_InstanceToLruIt[this] = m_Lru.insert(m_Lru.begin(), this);
-		}
-
-		bool wasDirty;
-
-		T * result = OnAfxGetOrCreateUnmanaged(0b100 <= m_DirtyCount, wasDirty);
-
-		if (wasDirty && m_DirtyCount < 0b100) ++m_DirtyCount;
-
-		return result;*/
-
-		bool dummy;
-		return OnAfxGetOrCreateUnmanaged(false, dummy);
+		return OnAfxGetOrCreateUnmanaged();
 	}
 
 protected:
 	~CAfxDirect3DManaged()
 	{
-		/*
-		typename InstanceToLruIt_t::iterator itLruIt = m_InstanceToLruIt.find(this);
-		if (itLruIt != m_InstanceToLruIt.end())
-		{
-			m_Lru.erase(itLruIt->second);
-			m_InstanceToLruIt.erase(itLruIt);
-		}
-		*/
-
 		m_Instances.erase(this);
 	}
 
 	virtual void OnAfxDeviceLost() = 0;
 
-	virtual T * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty) = 0;
+	virtual T * OnAfxGetOrCreateUnmanaged() = 0;
 
 private:
 	typedef CAfxDirect3DManaged<T,D> Instance_t;
 	typedef std::set<typename Instance_t *> Instances_t;
-	//typedef std::list<typename Instance_t *> Lru_t;
-	//typedef std::map<typename Instance_t *, typename Lru_t::iterator> InstanceToLruIt_t;
 
-	//static int m_PresentNr;
 	static typename Instances_t m_Instances;
-	//static typename Lru_t m_Lru;
-	//static typename InstanceToLruIt_t m_InstanceToLruIt;
-
-	//int m_MyPresentNr;
-	//int m_DirtyCount;
 };
 
-//template <typename T> int CAfxDirect3DManaged<T>::m_PresentNr = 0;
 template <typename T, typename D> typename CAfxDirect3DManaged <T, D> ::Instances_t CAfxDirect3DManaged<T, D>::m_Instances;
-//template <typename T> typename CAfxDirect3DManaged<T>::Lru_t CAfxDirect3DManaged<T>::m_Lru;
-//template <typename T> typename CAfxDirect3DManaged<T>::InstanceToLruIt_t CAfxDirect3DManaged<T>::m_InstanceToLruIt;
 
 
 // CAfxManagedOffscreenPlainSurface ////////////////////////////////////////////
@@ -435,7 +339,11 @@ public:
 
 	STDMETHOD(UnlockRect)(THIS)
 	{
-		return m_pSystemMemPool->UnlockRect();
+		HRESULT result = m_pSystemMemPool->UnlockRect();
+
+		UpdateUnmanaged();
+
+		return result;
 	}
 
 	STDMETHOD(GetDC)(THIS_ HDC *phdc)
@@ -476,6 +384,11 @@ public:
 		this->D3DDebugData.LockCount = 0;
 		this->D3DDebugData.DCCount = 0;
 		this->D3DDebugData.CreationCallStack = L"n/a";
+
+		m_DirtyRect.left = this->D3DDebugData.Width;
+		m_DirtyRect.top = this->D3DDebugData.Height;
+		m_DirtyRect.right = 0;
+		m_DirtyRect.bottom = 0;
 	}
 
 	HRESULT AddDirtyRect(const RECT *pDirtyRect)
@@ -505,49 +418,53 @@ public:
 	}
 
 protected:
-	virtual IDirect3DSurface9 * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty)
+	void UpdateUnmanaged()
 	{
-		if (switchToDynamic && !(this->D3DDebugData.Usage & D3DUSAGE_DYNAMIC))
+		if (m_pDefaultPool && m_Dirty)
 		{
-			this->D3DDebugData.Usage |= D3DUSAGE_DYNAMIC;
-			if (m_pDefaultPool)
+			IDirect3DDevice9 * device;
+			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				m_pDefaultPool->Release();
-				m_pDefaultPool = nullptr;
+				POINT point = { m_DirtyRect.left, m_DirtyRect.top };
+				device->UpdateSurface(m_pSystemMemPool, &m_DirtyRect, m_pDefaultPool, &point);
+
+				m_DirtyRect.left = this->D3DDebugData.Width;
+				m_DirtyRect.top = this->D3DDebugData.Height;
+				m_DirtyRect.right = 0;
+				m_DirtyRect.bottom = 0;
+
+				m_Dirty = false;
+
+				device->Release();
 			}
 		}
+	}
 
+	virtual IDirect3DSurface9 * OnAfxGetOrCreateUnmanaged()
+	{
 		if (nullptr == m_pDefaultPool)
-		{
-			this->AddDirtyRect(NULL);
-		}
-
-		outWasDirty = m_Dirty;
-
-		if (m_Dirty)
 		{
 			IDirect3DDevice9 * device;
 
 			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				if (nullptr == m_pDefaultPool)
+				if (SUCCEEDED(device->CreateOffscreenPlainSurface(this->D3DDebugData.Width, this->D3DDebugData.Height, this->D3DDebugData.Format, this->D3DDebugData.Pool, &m_pDefaultPool, nullptr)))
 				{
-					if (SUCCEEDED(device->CreateOffscreenPlainSurface(this->D3DDebugData.Width, this->D3DDebugData.Height, this->D3DDebugData.Format, this->D3DDebugData.Pool, &m_pDefaultPool, nullptr)))
-					{
-						m_pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
-					}
-				}
+					m_pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
 
-				if (m_pDefaultPool && m_Dirty)
-				{
-					POINT point = { m_DirtyRect.left, m_DirtyRect.top };
-					device->UpdateSurface(m_pSystemMemPool, &m_DirtyRect, m_pDefaultPool, &point);
-					m_Dirty = false;
+					m_DirtyRect.left = 0;
+					m_DirtyRect.top = 0;
+					m_DirtyRect.right = this->D3DDebugData.Width;
+					m_DirtyRect.bottom = this->D3DDebugData.Height;
+
+					m_Dirty = true;
 				}
 
 				device->Release();
 			}
 		}
+
+		UpdateUnmanaged();
 
 		return m_pDefaultPool;
 	}
@@ -580,9 +497,9 @@ public:
 	/// <summary>Called by child wrapped surface in order to update after device has been lost.</summary>
 	/// <param name="surface">The child surface of this texture.</param>
 	/// <returns>The new default pool surface if available.</returns>
-	virtual IDirect3DSurface9 * AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(CAfxManagedChildDirect3DSurface9 * surface, bool switchToDynamic, bool & inOutasDirty) = 0;
+	virtual IDirect3DSurface9 * AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(CAfxManagedChildDirect3DSurface9 * surface) = 0;
 
-	virtual void AfxManagedChildDirect3DSurface9_GotDirty(CAfxManagedChildDirect3DSurface9 * surface) = 0;
+	virtual void AfxManagedChildDirect3DSurface9_Updated(CAfxManagedChildDirect3DSurface9 * surface) = 0;
 };
 
 // {AFF452F9-B129-4B01-85AC-6D7EFD4F1D9D}
@@ -715,7 +632,13 @@ public:
 
 	STDMETHOD(UnlockRect)(THIS)	
 	{
-		return m_pSystemMemPool->UnlockRect();
+		HRESULT result = m_pSystemMemPool->UnlockRect();
+
+		UpdateUnmanaged();
+
+		m_ParentTexture->AfxManagedChildDirect3DSurface9_Updated(this);
+
+		return result;
 	}
 
 	STDMETHOD(GetDC)(THIS_ HDC *phdc)
@@ -756,6 +679,11 @@ public:
 		this->D3DDebugData.LockCount = 0;
 		this->D3DDebugData.DCCount = 0;
 		this->D3DDebugData.CreationCallStack = L"n/a";
+
+		m_DirtyRect.left = this->D3DDebugData.Width;
+		m_DirtyRect.top = this->D3DDebugData.Height;
+		m_DirtyRect.right = 0;
+		m_DirtyRect.bottom = 0;
 	}
 
 	HRESULT AddDirtyRect(const RECT *pDirtyRect)
@@ -781,36 +709,47 @@ public:
 
 		m_Dirty = true;
 
-		m_ParentTexture->AfxManagedChildDirect3DSurface9_GotDirty(this);
-
 		return D3D_OK;
 	}
 
 protected:
-	virtual IDirect3DSurface9 * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty)
+	void UpdateUnmanaged()
 	{
-		if (m_pDefaultPool)
-		{
-			m_pDefaultPool->Release();
-			m_pDefaultPool = nullptr;
-		}
-
-		m_pDefaultPool = m_ParentTexture->AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(this, this->D3DDebugData.Usage & D3DUSAGE_DYNAMIC, m_Dirty);
-		
-		outWasDirty = m_Dirty;
-
-		IDirect3DDevice9 * device;
-
 		if (m_pDefaultPool && m_Dirty)
 		{
+			IDirect3DDevice9 * device;
 			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
 				POINT point = { m_DirtyRect.left, m_DirtyRect.top };
 				device->UpdateSurface(m_pSystemMemPool, &m_DirtyRect, m_pDefaultPool, &point);
+
+				m_DirtyRect.left = this->D3DDebugData.Width;
+				m_DirtyRect.top = this->D3DDebugData.Height;
+				m_DirtyRect.right = 0;
+				m_DirtyRect.bottom = 0;
+
 				m_Dirty = false;
+
 				device->Release();
 			}
 		}
+	}
+
+	virtual IDirect3DSurface9 * OnAfxGetOrCreateUnmanaged()
+	{
+		if (nullptr == m_pDefaultPool)
+		{
+			m_pDefaultPool = m_ParentTexture->AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(this);
+
+			m_DirtyRect.left = this->D3DDebugData.Width;
+			m_DirtyRect.top = this->D3DDebugData.Height;
+			m_DirtyRect.right = 0;
+			m_DirtyRect.bottom = 0;
+
+			m_Dirty = false;
+		}
+
+		UpdateUnmanaged();
 
 		return m_pDefaultPool;
 	}
@@ -1013,6 +952,8 @@ public:
 		if (SUCCEEDED(result) && 0 == Level)
 		{
 			--this->D3DDebugData.LockCount;
+
+			UpdateUnmanaged();
 		}
 
 		return result;
@@ -1070,51 +1011,47 @@ public:
 	}
 
 protected:
-	virtual IDirect3DTexture9 * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty)
+	void UpdateUnmanaged()
 	{
-		if (switchToDynamic && !(this->D3DDebugData.Usage & D3DUSAGE_DYNAMIC))
+		if (m_pDefaultPool && m_Dirty)
 		{
-			this->D3DDebugData.Usage |= D3DUSAGE_DYNAMIC;
-			if (m_pDefaultPool)
+			IDirect3DDevice9 * device;
+			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				m_pDefaultPool->Release();
-				m_pDefaultPool = nullptr;
+				device->UpdateTexture(m_pSystemMemPool, m_pDefaultPool);
+
+				m_Dirty = false;
+
+				device->Release();
 			}
 		}
+	}
 
+	virtual IDirect3DTexture9 * OnAfxGetOrCreateUnmanaged()
+	{
 		if (nullptr == m_pDefaultPool)
-			m_Dirty = true;
-
-		outWasDirty = m_Dirty;
-
-		if (m_Dirty)
 		{
 			IDirect3DDevice9 * device;
 
 			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				if (nullptr == m_pDefaultPool)
+				IDirect3DTexture9 * pDefaultPool;
+				if (SUCCEEDED(device->CreateTexture(this->D3DDebugData.Width, this->D3DDebugData.Height, this->D3DDebugData.Levels, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
 				{
-					IDirect3DTexture9 * pDefaultPool;
-					if (SUCCEEDED(device->CreateTexture(this->D3DDebugData.Width, this->D3DDebugData.Height, this->D3DDebugData.Levels, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
-					{
-						m_pDefaultPool = pDefaultPool;
+					m_pDefaultPool = pDefaultPool;
 
-						pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
-						pDefaultPool->SetLOD(m_pSystemMemPool->GetLOD());
-						pDefaultPool->SetAutoGenFilterType(m_pSystemMemPool->GetAutoGenFilterType());
-					}
-				}
+					pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
+					pDefaultPool->SetLOD(m_pSystemMemPool->GetLOD());
+					pDefaultPool->SetAutoGenFilterType(m_pSystemMemPool->GetAutoGenFilterType());
 
-				if (m_pDefaultPool && m_Dirty)
-				{
-					device->UpdateTexture(m_pSystemMemPool, m_pDefaultPool);
-					m_Dirty = false;
+					m_Dirty = true;
 				}
 
 				device->Release();
 			}
 		}
+
+		UpdateUnmanaged();
 
 		return m_pDefaultPool;
 	}
@@ -1128,14 +1065,11 @@ protected:
 		}
 	}
 
-	virtual IDirect3DSurface9 * AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(CAfxManagedChildDirect3DSurface9 * surface, bool switchToDynamic, bool & inOutWasDirty)
+	virtual IDirect3DSurface9 * AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(CAfxManagedChildDirect3DSurface9 * surface)
 	{
 		UINT level = 0;
 		DWORD levelSize = sizeof(level);
 		IDirect3DSurface9 * surf = NULL;
-
-		m_Dirty = m_Dirty || inOutWasDirty;
-		inOutWasDirty = m_Dirty;
 
 		m_pDefaultPool = AfxGetOrCreateUnmanaged();
 
@@ -1152,9 +1086,11 @@ protected:
 		return surf;
 	}
 
-	virtual void AfxManagedChildDirect3DSurface9_GotDirty(CAfxManagedChildDirect3DSurface9 * surface)
+	virtual void AfxManagedChildDirect3DSurface9_Updated(CAfxManagedChildDirect3DSurface9 * surface)
 	{
 		m_Dirty = true;
+
+		UpdateUnmanaged();
 	}
 
 private:
@@ -1373,6 +1309,8 @@ public:
 	{
 		HRESULT result =  m_pSystemMemPool->UnlockBox(Level);
 
+		UpdateUnmanaged();
+
 		return result;
 	}
 
@@ -1404,51 +1342,47 @@ public:
 	}
 
 protected:
-	virtual IDirect3DVolumeTexture9 * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty)
+	void UpdateUnmanaged()
 	{
-		if (switchToDynamic && !(this->D3DDebugData.Usage & D3DUSAGE_DYNAMIC))
+		if (m_pDefaultPool && m_Dirty)
 		{
-			this->D3DDebugData.Usage |= D3DUSAGE_DYNAMIC;
-			if (m_pDefaultPool)
+			IDirect3DDevice9 * device;
+			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				m_pDefaultPool->Release();
-				m_pDefaultPool = nullptr;
+				device->UpdateTexture(m_pSystemMemPool, m_pDefaultPool);
+
+				m_Dirty = false;
+
+				device->Release();
 			}
 		}
+	}
 
+	virtual IDirect3DVolumeTexture9 * OnAfxGetOrCreateUnmanaged()
+	{
 		if (nullptr == m_pDefaultPool)
-			m_Dirty = true;
-
-		outWasDirty = m_Dirty;
-
-		if (m_Dirty)
 		{
 			IDirect3DDevice9 * device;
 
 			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				if (nullptr == m_pDefaultPool)
+				IDirect3DVolumeTexture9 * pDefaultPool;
+				if (SUCCEEDED(device->CreateVolumeTexture(this->D3DDebugData.Width, this->D3DDebugData.Height, this->D3DDebugData.Depth, this->D3DDebugData.Levels, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
 				{
-					IDirect3DVolumeTexture9 * pDefaultPool;
-					if (SUCCEEDED(device->CreateVolumeTexture(this->D3DDebugData.Width, this->D3DDebugData.Height, this->D3DDebugData.Depth, this->D3DDebugData.Levels, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
-					{
-						m_pDefaultPool = pDefaultPool;
+					m_pDefaultPool = pDefaultPool;
 
-						pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
-						pDefaultPool->SetLOD(m_pSystemMemPool->GetLOD());
-						pDefaultPool->SetAutoGenFilterType(m_pSystemMemPool->GetAutoGenFilterType());
-					}
-				}
+					pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
+					pDefaultPool->SetLOD(m_pSystemMemPool->GetLOD());
+					pDefaultPool->SetAutoGenFilterType(m_pSystemMemPool->GetAutoGenFilterType());
 
-				if (m_pDefaultPool && m_Dirty)
-				{
-					device->UpdateTexture(m_pSystemMemPool, m_pDefaultPool);
-					m_Dirty = false;
+					m_Dirty = true;
 				}
 
 				device->Release();
 			}
 		}
+
+		UpdateUnmanaged();
 
 		return m_pDefaultPool;
 	}
@@ -1652,6 +1586,8 @@ public:
 		{
 		}
 
+		UpdateUnmanaged();
+
 		return result;
 	}
 
@@ -1702,52 +1638,47 @@ public:
 	}
 
 protected:
-
-	virtual IDirect3DCubeTexture9 * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty)
+	void UpdateUnmanaged()
 	{
-		if (switchToDynamic && !(this->D3DDebugData.Usage & D3DUSAGE_DYNAMIC))
+		if (m_pDefaultPool && m_Dirty)
 		{
-			this->D3DDebugData.Usage |= D3DUSAGE_DYNAMIC;
-			if (m_pDefaultPool)
+			IDirect3DDevice9 * device;
+			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				m_pDefaultPool->Release();
-				m_pDefaultPool = nullptr;
+				device->UpdateTexture(m_pSystemMemPool, m_pDefaultPool);
+
+				m_Dirty = false;
+
+				device->Release();
 			}
 		}
+	}
 
+	virtual IDirect3DCubeTexture9 * OnAfxGetOrCreateUnmanaged()
+	{
 		if (nullptr == m_pDefaultPool)
-			m_Dirty = true;
-
-		outWasDirty = m_Dirty;
-
-		if (m_Dirty)
 		{
 			IDirect3DDevice9 * device;
 
 			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				if (nullptr == m_pDefaultPool)
+				IDirect3DCubeTexture9 * pDefaultPool;
+				if (SUCCEEDED(device->CreateCubeTexture(this->D3DDebugData.Width, this->D3DDebugData.Levels, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
 				{
-					IDirect3DCubeTexture9 * pDefaultPool;
-					if (SUCCEEDED(device->CreateCubeTexture(this->D3DDebugData.Width, this->D3DDebugData.Levels, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
-					{
-						m_pDefaultPool = pDefaultPool;
+					m_pDefaultPool = pDefaultPool;
 
-						pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
-						pDefaultPool->SetLOD(m_pSystemMemPool->GetLOD());
-						pDefaultPool->SetAutoGenFilterType(m_pSystemMemPool->GetAutoGenFilterType());
-					}
-				}
+					pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
+					pDefaultPool->SetLOD(m_pSystemMemPool->GetLOD());
+					pDefaultPool->SetAutoGenFilterType(m_pSystemMemPool->GetAutoGenFilterType());
 
-				if (m_pDefaultPool && m_Dirty)
-				{
-					device->UpdateTexture(m_pSystemMemPool, m_pDefaultPool);
-					m_Dirty = false;
+					m_Dirty = true;
 				}
 
 				device->Release();
 			}
 		}
+
+		UpdateUnmanaged();
 
 		return m_pDefaultPool;
 	}
@@ -1761,14 +1692,11 @@ protected:
 		}
 	}
 
-	virtual IDirect3DSurface9 * AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(CAfxManagedChildDirect3DSurface9 * surface, bool switchToDynamic, bool & inOutWasDirty)
+	virtual IDirect3DSurface9 * AfxManagedChildDirect3DSurface9_GetDefaultPoolSurface(CAfxManagedChildDirect3DSurface9 * surface)
 	{
 		MyCubeSurfaceInfo myCubeSurfaceInfo = { D3DCUBEMAP_FACE_POSITIVE_X, 0 };
 		DWORD myCubeSurfaceInfoSize = sizeof(myCubeSurfaceInfo);
 		IDirect3DSurface9 * surf = NULL;
-
-		m_Dirty = m_Dirty || inOutWasDirty;
-		inOutWasDirty = m_Dirty;
 
 		m_pDefaultPool = AfxGetOrCreateUnmanaged();
 
@@ -1785,9 +1713,11 @@ protected:
 		return surf;
 	}
 
-	virtual void AfxManagedChildDirect3DSurface9_GotDirty(CAfxManagedChildDirect3DSurface9 * surface)
+	virtual void AfxManagedChildDirect3DSurface9_Updated(CAfxManagedChildDirect3DSurface9 * surface)
 	{
 		m_Dirty = true;
+
+		UpdateUnmanaged();
 	}
 
 private:
@@ -1961,6 +1891,8 @@ public:
 	{
 		HRESULT result = m_pSystemMemPool->Unlock();
 
+		UpdateUnmanaged();
+
 		return result;
 	}
 
@@ -1985,62 +1917,50 @@ public:
 	}
 
 protected:
-
-	virtual IDirect3DVertexBuffer9 * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty)
+	void UpdateUnmanaged()
 	{
-		if (switchToDynamic && !(this->D3DDebugData.Usage & D3DUSAGE_DYNAMIC))
+		if (m_pDefaultPool && m_Dirty)
 		{
-			this->D3DDebugData.Usage |= D3DUSAGE_DYNAMIC;
-			if (m_pDefaultPool)
+			void * pSource;
+			void * pTarget;
+
+			if (SUCCEEDED(m_pSystemMemPool->Lock(0, this->D3DDebugData.Length, &pSource, D3DLOCK_READONLY | D3DLOCK_NOOVERWRITE | D3DLOCK_NO_DIRTY_UPDATE)))
 			{
-				m_pDefaultPool->Release();
-				m_pDefaultPool = nullptr;
+				if (SUCCEEDED(m_pDefaultPool->Lock(0, this->D3DDebugData.Length, &pTarget, 0)))
+				{
+					memcpy(pTarget, pSource, this->D3DDebugData.Length);
+					m_pDefaultPool->Unlock();
+
+					m_Dirty = false;
+				}
+				m_pSystemMemPool->Unlock();
 			}
 		}
+	}
 
+	virtual IDirect3DVertexBuffer9 * OnAfxGetOrCreateUnmanaged()
+	{
 		if (nullptr == m_pDefaultPool)
-			m_Dirty = true;
-
-		outWasDirty = m_Dirty;
-
-		if (m_Dirty)
 		{
 			IDirect3DDevice9 * device;
 
 			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				if (nullptr == m_pDefaultPool)
+				IDirect3DVertexBuffer9 * pDefaultPool;
+				if (SUCCEEDED(device->CreateVertexBuffer(this->D3DDebugData.Length, this->D3DDebugData.Usage, this->D3DDebugData.FVF, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
 				{
-					IDirect3DVertexBuffer9 * pDefaultPool;
-					if (SUCCEEDED(device->CreateVertexBuffer(this->D3DDebugData.Length, this->D3DDebugData.Usage, this->D3DDebugData.FVF, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
-					{
-						m_pDefaultPool = pDefaultPool;
+					m_pDefaultPool = pDefaultPool;
 
-						pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
-					}
-				}
+					pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
 
-				if (m_pDefaultPool && m_Dirty)
-				{
-					void * pSource;
-					void * pTarget;
-
-					if (SUCCEEDED(m_pSystemMemPool->Lock(0, this->D3DDebugData.Length, &pSource, D3DLOCK_READONLY | D3DLOCK_NOOVERWRITE | D3DLOCK_NO_DIRTY_UPDATE)))
-					{
-						if (SUCCEEDED(m_pDefaultPool->Lock(0, this->D3DDebugData.Length, &pTarget, 0)))
-						{
-							memcpy(pTarget, pSource, this->D3DDebugData.Length);
-							m_pDefaultPool->Unlock();
-							m_Dirty = false;
-						}
-						m_pSystemMemPool->Unlock();
-					}
-
+					m_Dirty = true;
 				}
 
 				device->Release();
 			}
 		}
+
+		UpdateUnmanaged();
 
 		return m_pDefaultPool;
 
@@ -2173,6 +2093,8 @@ public:
 	{
 		HRESULT result = m_pSystemMemPool->Unlock();
 
+		UpdateUnmanaged();
+
 		return result;
 	}
 
@@ -2197,61 +2119,50 @@ public:
 	}
 
 protected:
-	virtual IDirect3DIndexBuffer9 * OnAfxGetOrCreateUnmanaged(bool switchToDynamic, bool & outWasDirty)
+	void UpdateUnmanaged()
 	{
-		if (switchToDynamic && !(this->D3DDebugData.Usage & D3DUSAGE_DYNAMIC))
+		if (m_pDefaultPool && m_Dirty)
 		{
-			this->D3DDebugData.Usage |= D3DUSAGE_DYNAMIC;
-			if (m_pDefaultPool)
+			void * pSource;
+			void * pTarget;
+
+			if (SUCCEEDED(m_pSystemMemPool->Lock(0, this->D3DDebugData.Length, &pSource, D3DLOCK_READONLY | D3DLOCK_NOOVERWRITE | D3DLOCK_NO_DIRTY_UPDATE)))
 			{
-				m_pDefaultPool->Release();
-				m_pDefaultPool = nullptr;
+				if (SUCCEEDED(m_pDefaultPool->Lock(0, this->D3DDebugData.Length, &pTarget, 0)))
+				{
+					memcpy(pTarget, pSource, this->D3DDebugData.Length);
+					m_pDefaultPool->Unlock();
+
+					m_Dirty = false;
+				}
+				m_pSystemMemPool->Unlock();
 			}
 		}
+	}
 
-		if (nullptr == m_pDefaultPool)
-			m_Dirty = true;
-
-		outWasDirty = m_Dirty;
-
-		if(m_Dirty)
+	virtual IDirect3DIndexBuffer9 * OnAfxGetOrCreateUnmanaged()
+	{
+		if(nullptr == m_pDefaultPool)
 		{
 			IDirect3DDevice9 * device;
 
 			if (SUCCEEDED(m_pSystemMemPool->GetDevice(&device)))
 			{
-				if (nullptr == m_pDefaultPool)
+				IDirect3DIndexBuffer9 * pDefaultPool;
+				if (SUCCEEDED(device->CreateIndexBuffer(this->D3DDebugData.Length, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
 				{
-					IDirect3DIndexBuffer9 * pDefaultPool;
-					if (SUCCEEDED(device->CreateIndexBuffer(this->D3DDebugData.Length, this->D3DDebugData.Usage, this->D3DDebugData.Format, D3DPOOL_DEFAULT, &pDefaultPool, nullptr)))
-					{
-						m_pDefaultPool = pDefaultPool;
+					m_pDefaultPool = pDefaultPool;
 
-						pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
-					}
-				}
+					pDefaultPool->SetPriority(m_pSystemMemPool->GetPriority());
 
-				if (m_pDefaultPool && m_Dirty)
-				{
-					void * pSource;
-					void * pTarget;
-
-					if (SUCCEEDED(m_pSystemMemPool->Lock(0, this->D3DDebugData.Length, &pSource, D3DLOCK_READONLY | D3DLOCK_NOOVERWRITE | D3DLOCK_NO_DIRTY_UPDATE)))
-					{
-						if (SUCCEEDED(m_pDefaultPool->Lock(0, this->D3DDebugData.Length, &pTarget, 0)))
-						{
-							memcpy(pTarget, pSource, this->D3DDebugData.Length);
-							m_pDefaultPool->Unlock();
-							m_Dirty = false;
-						}
-						m_pSystemMemPool->Unlock();
-					}
-
+					m_Dirty = true;
 				}
 
 				device->Release();
 			}
 		}
+
+		UpdateUnmanaged();
 
 		return m_pDefaultPool;
 	}
@@ -4496,18 +4407,21 @@ public:
     IFACE_PASSTHROUGH_DECL(IDirect3DDevice9, CreateAdditionalSwapChain);
     IFACE_PASSTHROUGH_DECL(IDirect3DDevice9, GetSwapChain);
     IFACE_PASSTHROUGH_DECL(IDirect3DDevice9, GetNumberOfSwapChains);
-    
-	STDMETHOD(Reset)(THIS_ D3DPRESENT_PARAMETERS* pPresentationParameters)
-	{
-		D3DPRESENT_PARAMETERS paramsCopy;
 
+	void Afx_Reset_Before(D3DPRESENT_PARAMETERS* pPresentationParameters, D3DDISPLAYMODEEX *pFullscreenDisplayMode)
+	{
 		if (pPresentationParameters)
 		{
 			FixPresentationParementers(pPresentationParameters);
-			paramsCopy = *pPresentationParameters;
 		}
 
-		Shared_Direct3DDevice9_Reset_Before();
+#ifdef AFX_MIRV_PGL
+		MirvPgl::D3D9_Reset();
+#endif
+
+		AfxHookSource::Gui::On_Direct3DDevice9_Reset_Before();
+
+		g_CampathDrawer.Reset();
 
 		if (trackedRenderTarget)
 		{
@@ -4521,7 +4435,7 @@ public:
 			trackedRenderTarget->Release();
 			trackedRenderTarget = nullptr;
 		}
-		
+
 		if (trackedDepthStencil)
 		{
 			trackedDepthStencil->Release();
@@ -4542,11 +4456,12 @@ public:
 			CAfxManagedDirect3DIndexBuffer9::AfxDeviceLost();
 		}
 #endif
-		
-		HRESULT hResult = g_OldDirect3DDevice9->Reset(pPresentationParameters);
+	}
 
+	void Afx_Reset_After(HRESULT hResult, D3DPRESENT_PARAMETERS* pPresentationParameters, D3DDISPLAYMODEEX *pFullscreenDisplayMode)
+	{
 		if (SUCCEEDED(hResult))
-		{		
+		{
 #if AFX_INTEROP
 			if (AfxInterop::Enabled())
 			{
@@ -4556,16 +4471,22 @@ public:
 			HookInitialBuffers();
 		}
 
-		Shared_Direct3DDevice9_Reset_After();
+		AfxHookSource::Gui::On_Direct3DDevice9_Reset_After();
+	}
+    
+	STDMETHOD(Reset)(THIS_ D3DPRESENT_PARAMETERS* pPresentationParameters)
+	{
+		Afx_Reset_Before(pPresentationParameters, NULL);
+
+		HRESULT hResult = g_OldDirect3DDevice9->Reset(pPresentationParameters);
+
+		Afx_Reset_After(hResult, pPresentationParameters, NULL);
 
 		return hResult;
 	}
 
-    STDMETHOD(Present)(THIS_ CONST RECT* pSourceRect,CONST RECT* pDestRect,HWND hDestWindowOverride,CONST RGNDATA* pDirtyRegion)
+	void Afx_Present_Before(CONST RECT* pSourceRect, CONST RECT* pDestRect, HWND hDestWindowOverride, CONST RGNDATA* pDirtyRegion, DWORD dwFlags)
 	{
-		if (m_Block_Present)
-			return D3D_OK;
-
 #if AFX_INTEROP
 		if (AfxInterop::Enabled())
 		{
@@ -4579,20 +4500,27 @@ public:
 			}
 		}
 #endif
+	}
+
+	void Afx_Present_After(HRESULT hResult)
+	{
+		AfxHookSource::Gui::On_Direct3DDevice9_Present(hResult == D3DERR_DEVICELOST);
+
+#ifdef AFX_MIRV_PGL
+		MirvPgl::DrawingThread_UnleashData();
+#endif
+	}
+
+    STDMETHOD(Present)(THIS_ CONST RECT* pSourceRect,CONST RECT* pDestRect,HWND hDestWindowOverride,CONST RGNDATA* pDirtyRegion)
+	{
+		if (m_Block_Present)
+			return D3D_OK;
+
+		Afx_Present_Before(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion, 0);
 
 		HRESULT result = g_OldDirect3DDevice9->Present(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 
-#if AFX_INTEROP
-		CAfxManagedDirect3DIndexBuffer9::AfxDevicePresented();
-		CAfxManagedDirect3DVertexBuffer9::AfxDevicePresented();
-		CAfxManagedOffscreenPlainSurface::AfxDevicePresented();
-		CAfxManagedDirect3DVolumeTexture9::AfxDevicePresented();
-		CAfxManagedDirect3DCubeTexture9::AfxDevicePresented();
-		CAfxManagedDirect3DTexture9::AfxDevicePresented();
-		CAfxManagedChildDirect3DSurface9::AfxDevicePresented();
-#endif
-
-		Shared_Direct3DDevice9_Present(result == D3DERR_DEVICELOST, m_Block_Present);
+		Afx_Present_After(result);
 
 		return result;
 	}
@@ -5595,6 +5523,46 @@ public:
     IFACE_PASSTHROUGH_DECL(IDirect3DDevice9, DrawTriPatch);
     IFACE_PASSTHROUGH_DECL(IDirect3DDevice9, DeletePatch);
     IFACE_PASSTHROUGH_DECL(IDirect3DDevice9, CreateQuery);
+
+
+	/*** IDirect3DDevice9Ex methods ***/
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetConvolutionMonoKernel);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, ComposeRects);
+
+	STDMETHOD(PresentEx)(THIS_ CONST RECT* pSourceRect, CONST RECT* pDestRect, HWND hDestWindowOverride, CONST RGNDATA* pDirtyRegion, DWORD dwFlags)
+	{
+		Afx_Present_Before(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion, dwFlags);
+
+		HRESULT hResult = g_OldDirect3DDevice9Ex->PresentEx(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion, dwFlags);
+
+		Afx_Present_After(hResult);
+
+		return hResult;
+	}
+
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetGPUThreadPriority);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetGPUThreadPriority);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, WaitForVBlank);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CheckResourceResidency);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetMaximumFrameLatency);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetMaximumFrameLatency);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CheckDeviceState);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateRenderTargetEx);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateOffscreenPlainSurfaceEx);
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateDepthStencilSurfaceEx)
+
+	STDMETHOD(ResetEx)(THIS_ D3DPRESENT_PARAMETERS* pPresentationParameters, D3DDISPLAYMODEEX *pFullscreenDisplayMode)
+	{
+		Afx_Reset_Before(pPresentationParameters, NULL);
+
+		HRESULT hResult = g_OldDirect3DDevice9Ex->ResetEx(pPresentationParameters, pFullscreenDisplayMode);
+
+		Afx_Reset_After(hResult, pPresentationParameters, NULL);
+
+		return hResult;
+	}
+
+	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetDisplayModeEx);
 } g_NewDirect3DDevice9;
 
 IFACE_PASSTHROUGH_DEF(IDirect3DDevice9, TestCooperativeLevel, NewDirect3DDevice9, g_OldDirect3DDevice9);
@@ -5665,6 +5633,21 @@ IFACE_PASSTHROUGH_DEF(IDirect3DDevice9, DrawTriPatch, NewDirect3DDevice9, g_OldD
 IFACE_PASSTHROUGH_DEF(IDirect3DDevice9, DeletePatch, NewDirect3DDevice9, g_OldDirect3DDevice9);
 IFACE_PASSTHROUGH_DEF(IDirect3DDevice9, CreateQuery, NewDirect3DDevice9, g_OldDirect3DDevice9);
 
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetConvolutionMonoKernel, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, ComposeRects, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetGPUThreadPriority, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetGPUThreadPriority, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, WaitForVBlank, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CheckResourceResidency, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetMaximumFrameLatency, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetMaximumFrameLatency, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CheckDeviceState, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateRenderTargetEx, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateOffscreenPlainSurfaceEx, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateDepthStencilSurfaceEx, NewDirect3DDevice9, g_OldDirect3DDevice9);
+IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetDisplayModeEx, NewDirect3DDevice9, g_OldDirect3DDevice9);
+
+
 
 COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE CAfxHookDirect3DStateBlock9::Capture(THIS)
 {
@@ -5686,345 +5669,7 @@ COM_DECLSPEC_NOTHROW HRESULT STDMETHODCALLTYPE CAfxHookDirect3DStateBlock9::Appl
 	return hResult;
 }
 
-struct NewDirect3DDevice9Ex
-{
-public:
-    /*** IUnknown methods ***/
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, QueryInterface);
-
-	STDMETHOD_(ULONG,AddRef)(THIS)
-	{
-		ULONG result = g_OldDirect3DDevice9Ex->AddRef();
-
-		++g_NewDirect3DDevice9Ex_RefCount;
-
-		return result;
-	}
-
-    STDMETHOD_(ULONG,Release)(THIS)
-	{
-		--g_NewDirect3DDevice9Ex_RefCount;
-
-		if(0 == g_NewDirect3DDevice9Ex_RefCount)
-		{
-			Shared_Direct3DDevice9_Shutdown();
-		}
-
-		return g_OldDirect3DDevice9Ex->Release();
-	}
-
-    /*** IDirect3DDevice9Ex methods ***/
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, TestCooperativeLevel);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetAvailableTextureMem);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, EvictManagedResources);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetDirect3D);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetDeviceCaps);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetDisplayMode);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetCreationParameters);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetCursorProperties);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetCursorPosition);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, ShowCursor);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateAdditionalSwapChain);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetSwapChain);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetNumberOfSwapChains);
-    
-	STDMETHOD(Reset)(THIS_ D3DPRESENT_PARAMETERS* pPresentationParameters)
-	{
-		Shared_Direct3DDevice9_Reset_Before();
-
-		HRESULT hResult = g_OldDirect3DDevice9Ex->Reset(pPresentationParameters);
-
-		Shared_Direct3DDevice9_Reset_After();
-
-		return hResult;
-	}
-
-	STDMETHOD(Present)(THIS_ CONST RECT* pSourceRect, CONST RECT* pDestRect, HWND hDestWindowOverride, CONST RGNDATA* pDirtyRegion)
-	{
-		HRESULT hResult = g_OldDirect3DDevice9Ex->Present(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
-
-		Shared_Direct3DDevice9_Present(D3DERR_DEVICELOST == hResult, false);
-
-		return hResult;
-	}
-
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetBackBuffer);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetRasterStatus);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetDialogBoxMode);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetGammaRamp);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetGammaRamp);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateTexture);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateVolumeTexture);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateCubeTexture);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateVertexBuffer);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateIndexBuffer);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateRenderTarget);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateDepthStencilSurface);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, UpdateSurface);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, UpdateTexture);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetRenderTargetData);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetFrontBufferData);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, StretchRect);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, ColorFill);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateOffscreenPlainSurface);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetRenderTarget);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetRenderTarget);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetDepthStencilSurface);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetDepthStencilSurface);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, BeginScene);
-    
-	STDMETHOD(EndScene)(THIS)
-	{
-		Shared_Direct3DDevice9_EndScene();
-
-		return g_OldDirect3DDevice9Ex->EndScene();
-	}
-
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, Clear);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetTransform);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetTransform);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, MultiplyTransform);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetViewport);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetViewport);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetMaterial);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetMaterial);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetLight);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetLight);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, LightEnable);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetLightEnable);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetClipPlane);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetClipPlane);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetRenderState);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetRenderState);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateStateBlock);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, BeginStateBlock);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, EndStateBlock);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetClipStatus);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetClipStatus);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetTexture);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetTexture);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetTextureStageState);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetTextureStageState);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetSamplerState);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetSamplerState);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, ValidateDevice);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetPaletteEntries);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetPaletteEntries);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetCurrentTexturePalette);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetCurrentTexturePalette);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetScissorRect);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetScissorRect);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetSoftwareVertexProcessing);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetSoftwareVertexProcessing);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetNPatchMode);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetNPatchMode);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, DrawPrimitive);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, DrawIndexedPrimitive);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, DrawPrimitiveUP);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, DrawIndexedPrimitiveUP);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, ProcessVertices);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateVertexDeclaration);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetVertexDeclaration);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetVertexDeclaration);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetFVF);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetFVF);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateVertexShader);  
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetVertexShader);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetVertexShader);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetVertexShaderConstantF);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetVertexShaderConstantF);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetVertexShaderConstantI);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetVertexShaderConstantI);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetVertexShaderConstantB);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetVertexShaderConstantB);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetStreamSource);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetStreamSource);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetStreamSourceFreq);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetStreamSourceFreq);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetIndices);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetIndices);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreatePixelShader);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetPixelShader);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetPixelShader);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetPixelShaderConstantF);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetPixelShaderConstantF);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetPixelShaderConstantI);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetPixelShaderConstantI);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetPixelShaderConstantB);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetPixelShaderConstantB);
-	IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, DrawRectPatch);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, DrawTriPatch);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, DeletePatch);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateQuery);
-
-    /*** IDirect3DDevice9Ex methods ***/
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetConvolutionMonoKernel);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, ComposeRects);
-    
-	STDMETHOD(PresentEx)(THIS_ CONST RECT* pSourceRect, CONST RECT* pDestRect, HWND hDestWindowOverride, CONST RGNDATA* pDirtyRegion, DWORD dwFlags)
-	{
-		HRESULT hResult = g_OldDirect3DDevice9Ex->PresentEx(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion, dwFlags);
-
-		Shared_Direct3DDevice9_Present(D3DERR_DEVICELOST == hResult, false);
-
-		return hResult;
-	}
-
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetGPUThreadPriority);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetGPUThreadPriority);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, WaitForVBlank);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CheckResourceResidency);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, SetMaximumFrameLatency);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetMaximumFrameLatency);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CheckDeviceState);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateRenderTargetEx);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateOffscreenPlainSurfaceEx);
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, CreateDepthStencilSurfaceEx);
-    
-	STDMETHOD(ResetEx)(THIS_ D3DPRESENT_PARAMETERS* pPresentationParameters,D3DDISPLAYMODEEX *pFullscreenDisplayMode)
-	{
-		Shared_Direct3DDevice9_Reset_Before();
-
-		HRESULT hResult = g_OldDirect3DDevice9Ex->ResetEx(pPresentationParameters, pFullscreenDisplayMode);
-
-		Shared_Direct3DDevice9_Reset_After();
-
-		return hResult;
-	}
-
-    IFACE_PASSTHROUGH_DECL(IDirect3DDevice9Ex, GetDisplayModeEx);
-} g_NewDirect3DDevice9Ex;
-
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, QueryInterface, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, TestCooperativeLevel, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetAvailableTextureMem, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, EvictManagedResources, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetDirect3D, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetDeviceCaps, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetDisplayMode, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetCreationParameters, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetCursorProperties, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetCursorPosition, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, ShowCursor, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateAdditionalSwapChain, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetSwapChain, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetNumberOfSwapChains, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetBackBuffer, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetRasterStatus, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetDialogBoxMode, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetGammaRamp, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetGammaRamp, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateTexture, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateVolumeTexture, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateCubeTexture, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateVertexBuffer, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateIndexBuffer, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateRenderTarget, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateDepthStencilSurface, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, UpdateSurface, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, UpdateTexture, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetRenderTargetData, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetFrontBufferData, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, StretchRect, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, ColorFill, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateOffscreenPlainSurface, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetRenderTarget, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetRenderTarget, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetDepthStencilSurface, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetDepthStencilSurface, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, BeginScene, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, Clear, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetTransform, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetTransform, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, MultiplyTransform, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetViewport, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetViewport, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetMaterial, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetMaterial, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetLight, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetLight, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, LightEnable, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetLightEnable, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetClipPlane, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetClipPlane, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetRenderState, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetRenderState, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateStateBlock, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, BeginStateBlock, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, EndStateBlock, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetClipStatus, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetClipStatus, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetTexture, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetTexture, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetTextureStageState, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetTextureStageState, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetSamplerState, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetSamplerState, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, ValidateDevice, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetPaletteEntries, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetPaletteEntries, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetCurrentTexturePalette, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetCurrentTexturePalette, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetScissorRect, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetScissorRect, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetSoftwareVertexProcessing, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetSoftwareVertexProcessing, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetNPatchMode, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetNPatchMode, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, DrawPrimitive, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, DrawIndexedPrimitive, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, DrawPrimitiveUP, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, DrawIndexedPrimitiveUP, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, ProcessVertices, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateVertexDeclaration, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetVertexDeclaration, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetVertexDeclaration, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetFVF, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetFVF, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateVertexShader, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetVertexShader, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetVertexShader, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetVertexShaderConstantF, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetVertexShaderConstantF, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetVertexShaderConstantI, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetVertexShaderConstantI, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetVertexShaderConstantB, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetVertexShaderConstantB, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetStreamSource, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetStreamSource, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetStreamSourceFreq, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetStreamSourceFreq, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetIndices, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetIndices, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreatePixelShader, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetPixelShader, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetPixelShader, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetPixelShaderConstantF, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetPixelShaderConstantF, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetPixelShaderConstantI, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetPixelShaderConstantI, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetPixelShaderConstantB, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetPixelShaderConstantB, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, DrawRectPatch, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, DrawTriPatch, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, DeletePatch, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateQuery, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetConvolutionMonoKernel, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, ComposeRects, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetGPUThreadPriority, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetGPUThreadPriority, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, WaitForVBlank, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CheckResourceResidency, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, SetMaximumFrameLatency, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetMaximumFrameLatency, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CheckDeviceState, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateRenderTargetEx, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateOffscreenPlainSurfaceEx, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, CreateDepthStencilSurfaceEx, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3DDevice9Ex, GetDisplayModeEx, NewDirect3DDevice9Ex, g_OldDirect3DDevice9Ex);
-
-
-IDirect3D9 * g_OldDirect3D9;
+IDirect3D9 * g_OldDirect3D9 = nullptr;
 IDirect3D9Ex * g_OldDirect3D9Ex = nullptr;
 
 struct NewDirect3D9
@@ -6081,7 +5726,6 @@ struct NewDirect3D9
 
 		D3DDISPLAYMODE displayMode;
 
-
 		if (pPresentationParameters) FixPresentationParementers(pPresentationParameters);
 
 		g_bSupportsIntz = pPresentationParameters
@@ -6131,6 +5775,72 @@ struct NewDirect3D9
 		return hRet;
 	}
 
+	/*** IDirect3D9Ex methods ***/
+	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterModeCountEx);
+	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, EnumAdapterModesEx);
+	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterDisplayModeEx);
+
+	STDMETHOD(CreateDeviceEx)(THIS_ UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow, DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters, D3DDISPLAYMODEEX* pFullscreenDisplayMode, IDirect3DDevice9Ex** ppReturnedDeviceInterface)
+	{
+		HRESULT hRet = D3DERR_NOTAVAILABLE;
+
+		D3DDISPLAYMODE displayMode;
+
+		if (pPresentationParameters) FixPresentationParementers(pPresentationParameters);
+
+		g_bSupportsIntz = pPresentationParameters
+			&& SUCCEEDED(g_OldDirect3D9->GetAdapterDisplayMode(Adapter, &displayMode))
+			&& SUCCEEDED(g_OldDirect3D9->CheckDeviceFormat(Adapter, DeviceType, displayMode.Format, D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_TEXTURE, FOURCC_INTZ));
+
+#ifdef AFX_INTEROP
+		if (AfxInterop::Enabled() && pPresentationParameters)
+		{
+			DeviceType = D3DDEVTYPE_HAL;
+			BehaviorFlags = (BehaviorFlags & ~(DWORD)(D3DCREATE_MIXED_VERTEXPROCESSING | D3DCREATE_SOFTWARE_VERTEXPROCESSING)) | D3DCREATE_HARDWARE_VERTEXPROCESSING;
+
+			hRet = g_OldDirect3D9Ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, nullptr, ppReturnedDeviceInterface);
+
+			if (SUCCEEDED(hRet) && ppReturnedDeviceInterface)
+			{
+				g_OldDirect3DDevice9Ex = *ppReturnedDeviceInterface;
+				g_OldDirect3DDevice9 = *ppReturnedDeviceInterface;
+
+				*ppReturnedDeviceInterface = reinterpret_cast<IDirect3DDevice9Ex *>(&g_NewDirect3DDevice9);
+
+				g_NewDirect3DDevice9.Init(pPresentationParameters);
+
+				Shared_Direct3DDevice9_Init(Adapter, pPresentationParameters->hDeviceWindow, g_OldDirect3DDevice9);
+			}
+			else
+				return D3DERR_NOTAVAILABLE;
+		}
+		else
+		{
+#endif
+			hRet = g_OldDirect3D9Ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, nullptr, ppReturnedDeviceInterface);
+
+			if (SUCCEEDED(hRet) && pPresentationParameters && ppReturnedDeviceInterface)
+			{
+				g_OldDirect3DDevice9Ex = *ppReturnedDeviceInterface;
+				g_OldDirect3DDevice9 = *ppReturnedDeviceInterface;
+
+				*ppReturnedDeviceInterface = reinterpret_cast<IDirect3DDevice9Ex *>(&g_NewDirect3DDevice9);
+
+				g_NewDirect3DDevice9.Init(pPresentationParameters);
+
+				Shared_Direct3DDevice9_Init(Adapter, pPresentationParameters->hDeviceWindow, g_OldDirect3DDevice9);
+			}
+			else
+				return D3DERR_NOTAVAILABLE;
+#ifdef AFX_INTEROP
+		}
+#endif
+
+		return hRet;
+	}
+
+	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterLUID);
+
 } g_NewDirect3D9;
 
 IFACE_PASSTHROUGH_DEF(IDirect3D9, AddRef, NewDirect3D9, g_OldDirect3D9);
@@ -6148,89 +5858,10 @@ IFACE_PASSTHROUGH_DEF(IDirect3D9, CheckDeviceFormatConversion, NewDirect3D9, g_O
 IFACE_PASSTHROUGH_DEF(IDirect3D9, GetDeviceCaps, NewDirect3D9, g_OldDirect3D9);
 IFACE_PASSTHROUGH_DEF(IDirect3D9, GetAdapterMonitor, NewDirect3D9, g_OldDirect3D9);
 
-struct NewDirect3D9Ex
-{
-    /*** IUnknown methods ***/
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, QueryInterface);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, AddRef);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, Release);
-
-    /*** IDirect3D9 methods ***/
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, RegisterSoftwareDevice);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterCount);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterIdentifier);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterModeCount);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, EnumAdapterModes);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterDisplayMode);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, CheckDeviceType);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, CheckDeviceFormat);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, CheckDeviceMultiSampleType);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, CheckDepthStencilMatch);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, CheckDeviceFormatConversion);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetDeviceCaps);
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterMonitor);
-
-    STDMETHOD(CreateDevice)(THIS_ UINT Adapter,D3DDEVTYPE DeviceType,HWND hFocusWindow,DWORD BehaviorFlags,D3DPRESENT_PARAMETERS* pPresentationParameters,IDirect3DDevice9** ppReturnedDeviceInterface)
-	{
-		HRESULT hRet = g_OldDirect3D9Ex->CreateDevice(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, ppReturnedDeviceInterface);
-
-		if (SUCCEEDED(hRet) && pPresentationParameters && ppReturnedDeviceInterface)
-		{
-			g_OldDirect3DDevice9 = *ppReturnedDeviceInterface;
-
-			Shared_Direct3DDevice9_Init(Adapter, pPresentationParameters->hDeviceWindow, g_OldDirect3DDevice9);
-
-			*ppReturnedDeviceInterface = reinterpret_cast<IDirect3DDevice9 *>(&g_NewDirect3DDevice9);
-		}
-		
-		return hRet;
-	}
-
-    /*** IDirect3D9Ex methods ***/
-    IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterModeCountEx);
-    IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, EnumAdapterModesEx);
-    IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterDisplayModeEx);
-    
-	STDMETHOD(CreateDeviceEx)(THIS_ UINT Adapter,D3DDEVTYPE DeviceType,HWND hFocusWindow,DWORD BehaviorFlags,D3DPRESENT_PARAMETERS* pPresentationParameters,D3DDISPLAYMODEEX* pFullscreenDisplayMode,IDirect3DDevice9Ex** ppReturnedDeviceInterface)
-	{
-		HRESULT hRet = g_OldDirect3D9Ex->CreateDeviceEx(Adapter, DeviceType, hFocusWindow, BehaviorFlags, pPresentationParameters, pFullscreenDisplayMode, ppReturnedDeviceInterface);
-
-
-		if (SUCCEEDED(hRet) && pPresentationParameters && ppReturnedDeviceInterface)
-		{
-			g_OldDirect3DDevice9Ex = *ppReturnedDeviceInterface;
-
-			Shared_Direct3DDevice9_Init(Adapter, pPresentationParameters->hDeviceWindow, g_OldDirect3DDevice9Ex);
-
-			*ppReturnedDeviceInterface = reinterpret_cast<IDirect3DDevice9Ex *>(&g_NewDirect3DDevice9Ex);
-		}
-
-		return hRet;
-	}
-    
-	IFACE_PASSTHROUGH_DECL(IDirect3D9Ex, GetAdapterLUID);
-} g_NewDirect3D9Ex;
-
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, QueryInterface, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, AddRef, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, Release, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, RegisterSoftwareDevice, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterCount, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterIdentifier, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterModeCount, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, EnumAdapterModes, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterDisplayMode, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, CheckDeviceType, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, CheckDeviceFormat, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, CheckDeviceMultiSampleType, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, CheckDepthStencilMatch, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, CheckDeviceFormatConversion, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetDeviceCaps, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterMonitor, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterModeCountEx, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, EnumAdapterModesEx, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterDisplayModeEx, NewDirect3D9Ex, g_OldDirect3D9Ex);
-IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterLUID, NewDirect3D9Ex, g_OldDirect3D9Ex);
+IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterModeCountEx, NewDirect3D9, g_NewDirect3D9);
+IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, EnumAdapterModesEx, NewDirect3D9, g_NewDirect3D9);
+IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterDisplayModeEx, NewDirect3D9, g_NewDirect3D9);
+IFACE_PASSTHROUGH_DEF(IDirect3D9Ex, GetAdapterLUID, NewDirect3D9, g_NewDirect3D9);
 
 Direct3DCreate9_t old_Direct3DCreate9 = 0;
 Direct3DCreate9Ex_t old_Direct3DCreate9Ex = 0;
@@ -6274,7 +5905,9 @@ HRESULT WINAPI new_Direct3DCreate9Ex(UINT SDKVersion, IDirect3D9Ex** ppD3DDevice
 	{
 		HRESULT hResult = old_Direct3DCreate9Ex(SDKVersion, &g_OldDirect3D9Ex);
 
-		if(ppD3DDevice) *ppD3DDevice = 0 != g_OldDirect3D9Ex ? reinterpret_cast<IDirect3D9Ex *>(&g_NewDirect3D9Ex) : 0;
+		g_OldDirect3D9 = g_OldDirect3D9Ex;
+
+		if(ppD3DDevice) *ppD3DDevice = 0 != g_OldDirect3D9Ex ? reinterpret_cast<IDirect3D9Ex *>(&g_NewDirect3D9) : 0;
 
 		return hResult;
 	}
