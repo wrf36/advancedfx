@@ -2588,6 +2588,8 @@ public:
 
 	void OnDrawingHudEnd(void);
 
+	void On_DrawTranslucentRenderables(SOURCESDK::CSGO::CRendering3dView * rendering3dView, bool bInSkybox, bool bShadowDepth, bool afterCall);
+
 	void OnDrawingSkyBoxViewBegin(void);
 
 	void OnDrawingSkyBoxViewEnd(void);

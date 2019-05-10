@@ -27,7 +27,7 @@ extern SOURCESDK::IVRenderView_csgo * g_pVRenderView_csgo;
 
 namespace AfxInterop {
 
-	const INT32 m_Version = 3;
+	const INT32 m_Version = 5;
 
 	bool Connect();
 	void Disconnect();
@@ -61,9 +61,15 @@ namespace AfxInterop {
 
 		enum DrawingMessage
 		{
-			DrawingMessage_DrawingThreadBeforeHud = 1,
-			DrawingMessage_PreapareDraw = 2,
-			DrawingMessage_Finished = 3,
+			DrawingMessage_Invalid = 0,
+			DrawingMessage_PreapareDraw = 1,
+			DrawingMessage_BeforeTranslucentShadow = 2,
+			DrawingMessage_AfterTranslucentShadow = 3,
+			DrawingMessage_BeforeTranslucent = 4,
+			DrawingMessage_AfterTranslucent = 5,
+			DrawingMessage_BeforeHud = 6,
+			DrawingMessage_AfterHud = 7,
+			DrawingMessage_OnRenderViewEnd = 8
 		};
 
 		enum PrepareDrawReply
@@ -81,22 +87,25 @@ namespace AfxInterop {
 
 		IAfxInteropSurface * m_Surface = NULL;
 
-		bool m_DoHud = false;
+		bool m_Skip = true;
 	}
 
 	namespace EngineThread {
 
 		enum EngineMessage {
+			EngineMessage_Invalid = 0,
 			EngineMessage_LevelInitPreEntity = 1,
 			EngineMessage_LevelShutDown = 2,
 			EngineMessage_BeforeFrameStart = 3,
-			EngineMessage_BeforeHud = 4,
-			EngineMessage_AfterFrameRenderEnd = 5,
-			EngineMessage_EntityCreated = 6,
-			EngineMessage_EntityDeleted = 7,
-			EngineMessage_BeforeFrameRenderStart = 8,
-			EngineMessage_AfterFrameRenderStart = 9,
-			EngineMessage_OnRenderView = 10
+			EngineMessage_OnRenderView = 4,
+			EngineMessage_OnRenderViewEnd = 5,
+			EngineMessage_BeforeFrameRenderStart = 6,
+			EngineMessage_AfterFrameRenderStart = 7,
+			EngineMessage_OnViewOverride = 8,
+			EngineMessage_BeforeTranslucentShadow = 9,
+			EngineMessage_AfterTranslucentShadow = 10,
+			EngineMessage_BeforeTranslucent = 11,
+			EngineMessage_AfterTranslucent = 12
 		};
 
 		class CConsole
@@ -623,7 +632,7 @@ namespace AfxInterop {
 		return;
 	}
 
-	bool OnRenderView(float & Tx, float & Ty, float & Tz, float & Rx, float & Ry, float & Rz, float & Fov)
+	bool OnViewOverride(float & Tx, float & Ty, float & Tz, float & Rx, float & Ry, float & Rz, float & Fov)
 	{
 
 		std::unique_lock<std::mutex> lock(EngineThread::m_ConnectMutex);
@@ -632,7 +641,7 @@ namespace AfxInterop {
 
 		int errorLine = 0;
 
-		if (!WriteInt32(EngineThread::m_hPipe, EngineThread::EngineMessage_OnRenderView)) { errorLine = __LINE__; goto locked_error; }
+		if (!WriteInt32(EngineThread::m_hPipe, EngineThread::EngineMessage_OnViewOverride)) { errorLine = __LINE__; goto locked_error; }
 
 		if (!Flush(EngineThread::m_hPipe)) { errorLine = __LINE__; goto locked_error; }
 
@@ -669,15 +678,17 @@ namespace AfxInterop {
 		return false;
 
 	locked_error:
-		Tier0_Warning("AfxInterop::OnRenderView: Error in line %i.\n", errorLine);
+		Tier0_Warning("AfxInterop::OnViewOverride: Error in line %i.\n", errorLine);
 		lock.unlock();
 		Disconnect();
 		return false;
 	}
 
-	void BeforeHud(const SOURCESDK::CViewSetup_csgo & view)
+	void OnRenderView(const SOURCESDK::CViewSetup_csgo & view, EnabledFeatures_t & outEnabled)
 	{
 		if (!m_Enabled) return;
+
+		outEnabled.Clear();
 
 		std::unique_lock<std::mutex> lock(EngineThread::m_ConnectMutex);
 
@@ -686,7 +697,7 @@ namespace AfxInterop {
 		int errorLine = 0;
 		{
 
-			if (!WriteInt32(EngineThread::m_hPipe, EngineThread::EngineMessage_BeforeHud)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, EngineThread::EngineMessage_OnRenderView)) { errorLine = __LINE__; goto error; }
 
 			if (!WriteInt32(EngineThread::m_hPipe, EngineThread::m_Frame)) { errorLine = __LINE__; goto error; }
 
@@ -694,8 +705,10 @@ namespace AfxInterop {
 			if (!WriteSingle(EngineThread::m_hPipe, g_MirvTime.GetTime())) { errorLine = __LINE__; goto error; }
 			if (!WriteSingle(EngineThread::m_hPipe, g_MirvTime.GetFrameTime())) { errorLine = __LINE__; goto error; }
 
-			if (!WriteInt32(EngineThread::m_hPipe, view.width)) { errorLine = __LINE__; goto error; }
-			if (!WriteInt32(EngineThread::m_hPipe, view.height)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledX)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledY)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledWidth)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledHeight)) { errorLine = __LINE__; goto error; }
 
 			SOURCESDK::VMatrix worldToView;
 			SOURCESDK::VMatrix viewToProjection;
@@ -738,17 +751,146 @@ namespace AfxInterop {
 			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[3][2])) { errorLine = __LINE__; goto error; }
 			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[3][3])) { errorLine = __LINE__; goto error; }
 
-			if (!Flush(EngineThread::m_hPipe)) { errorLine = __LINE__; goto error; } // TODO: move this flush as required, currently it's good here, since no more data after this.
+			if (!Flush(EngineThread::m_hPipe)) { errorLine = __LINE__; goto error; }
+
+			if (!ReadBoolean(EngineThread::m_hPipe, outEnabled.BeforeTranslucentShadow)) { errorLine = __LINE__; goto error; }
+			if (!ReadBoolean(EngineThread::m_hPipe, outEnabled.AfterTranslucentShadow)) { errorLine = __LINE__; goto error; }
+			if (!ReadBoolean(EngineThread::m_hPipe, outEnabled.BeforeTranslucent)) { errorLine = __LINE__; goto error; }
+			if (!ReadBoolean(EngineThread::m_hPipe, outEnabled.AfterTranslucent)) { errorLine = __LINE__; goto error; }
+			if (!ReadBoolean(EngineThread::m_hPipe, outEnabled.BeforeHud)) { errorLine = __LINE__; goto error; }
+			if (!ReadBoolean(EngineThread::m_hPipe, outEnabled.AfterHud)) { errorLine = __LINE__; goto error; }
 		}
 
 		return;
 
 	error:
-		Tier0_Warning("AfxInterop::BeforeHud: Error in line %i.\n", errorLine);
+		Tier0_Warning("AfxInterop::OnRenderView: Error in line %i.\n", errorLine);
 		lock.unlock();
 		Disconnect();
 		return;
 	}
+
+	void OnRenderViewEnd()
+	{
+		if (!m_Enabled) return;
+
+		std::unique_lock<std::mutex> lock(EngineThread::m_ConnectMutex);
+
+		if (!EngineThread::m_Connected) return;
+
+		int errorLine = 0;
+		{
+			if (!WriteInt32(EngineThread::m_hPipe, EngineThread::EngineMessage_OnRenderViewEnd)) { errorLine = __LINE__; goto error; }
+			if (!Flush(EngineThread::m_hPipe)) { errorLine = __LINE__; goto error; }
+		}
+
+		return;
+
+	error:
+		Tier0_Warning("AfxInterop::OnRenderViewEnd: Error in line %i.\n", errorLine);
+		lock.unlock();
+		Disconnect();
+		return;
+	}
+
+	void On_DrawTranslucentRenderables(SOURCESDK::CSGO::CRendering3dView * rendering3dView, bool bInSkybox, bool bShadowDepth, bool afterCall)
+	{
+		if (!m_Enabled) return;
+
+		if (bInSkybox) return;
+
+		std::unique_lock<std::mutex> lock(EngineThread::m_ConnectMutex);
+
+		if (!EngineThread::m_Connected) return;
+
+		int errorLine = 0;
+
+		{
+			EngineThread::EngineMessage message = EngineThread::EngineMessage_Invalid;
+
+			if (true == bShadowDepth)
+			{
+				if (false == afterCall)
+				{
+					message = EngineThread::EngineMessage_BeforeTranslucentShadow;
+				}
+				else
+				{
+					message = EngineThread::EngineMessage_AfterTranslucentShadow;
+				}
+			}
+			else
+			{
+				if (false == afterCall)
+				{
+					message = EngineThread::EngineMessage_BeforeTranslucent;
+				}
+				else
+				{
+					message = EngineThread::EngineMessage_AfterTranslucent;
+				}
+			}
+
+			if (!WriteInt32(EngineThread::m_hPipe, message)) { errorLine = __LINE__; goto error; }
+
+			SOURCESDK::CViewSetup_csgo & view = rendering3dView->AfxHackGetViewSetup();
+
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledX)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledY)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledWidth)) { errorLine = __LINE__; goto error; }
+			if (!WriteInt32(EngineThread::m_hPipe, view.m_nUnscaledHeight)) { errorLine = __LINE__; goto error; }
+
+			SOURCESDK::VMatrix worldToView;
+			SOURCESDK::VMatrix viewToProjection;
+			SOURCESDK::VMatrix worldToProjection;
+			SOURCESDK::VMatrix worldToPixels;
+
+			g_pVRenderView_csgo->GetMatricesForView(view, &worldToView, &viewToProjection, &worldToProjection, &worldToPixels);
+
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[0][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[0][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[0][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[0][3])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[1][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[1][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[1][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[1][3])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[2][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[2][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[2][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[2][3])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[3][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[3][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[3][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, worldToView.m[3][3])) { errorLine = __LINE__; goto error; }
+
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[0][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[0][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[0][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[0][3])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[1][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[1][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[1][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[1][3])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[2][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[2][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[2][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[2][3])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[3][0])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[3][1])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[3][2])) { errorLine = __LINE__; goto error; }
+			if (!WriteSingle(EngineThread::m_hPipe, viewToProjection.m[3][3])) { errorLine = __LINE__; goto error; }
+
+			return;
+		}
+
+	error:
+		Tier0_Warning("AfxInterop::On_DrawingTranslucentRenderables: Error in line %i.\n", errorLine);
+		lock.unlock();
+		Disconnect();
+		return;
+	}
+
 
 	void Shutdown() {
 		if (!m_Enabled) return;
@@ -774,7 +916,7 @@ namespace AfxInterop {
 	{
 		if (!m_Enabled) return;
 
-		DrawingThread::m_DoHud = false;
+		DrawingThread::m_Skip = true;
 
 		std::unique_lock<std::mutex> lock(DrawingThread::m_ConnectMutex);
 
@@ -800,13 +942,13 @@ namespace AfxInterop {
 			switch (prepareDrawReply)
 			{
 			case DrawingThread::PrepareDrawReply_Skip:
-				DrawingThread::m_DoHud = false;
+				DrawingThread::m_Skip = true;
 				return;
 			case DrawingThread::PrepareDrawReply_Retry:
 				break;
 			case DrawingThread::PrepareDrawReply_Continue:
 				{
-					DrawingThread::m_DoHud = true;
+					DrawingThread::m_Skip = false;
 
 					bool colorTextureWasLost;
 					HANDLE sharedColorTextureHandle;
@@ -823,7 +965,7 @@ namespace AfxInterop {
 						if (colorTextureWasLost) DrawingThread::m_Surface->AfxSetReplacement(NULL);
 						if (colorDepthTextureWasLost) DrawingThread::m_Surface->AfxSetDepthSurface(NULL);
 
-						if(sharedColorTextureHandle != DrawingThread::m_Surface->AfxGetReplacement() || sharedColorDepthTextureHandle != DrawingThread::m_Surface->AfxGetDepthSurface())
+						if(colorTextureWasLost && NULL != sharedColorTextureHandle || colorDepthTextureWasLost && NULL != sharedColorDepthTextureHandle)
 						{
 							IDirect3DDevice9 * device = NULL;
 							if (SUCCEEDED(DrawingThread::m_Surface->AfxGetSurface()->GetDevice(&device)))
@@ -832,7 +974,7 @@ namespace AfxInterop {
 
 								if (SUCCEEDED(DrawingThread::m_Surface->AfxGetSurface()->GetDesc(&desc)))
 								{
-									if(sharedColorTextureHandle != DrawingThread::m_Surface->AfxGetReplacement())
+									if(colorTextureWasLost && NULL != sharedColorTextureHandle)
 									{
 										IDirect3DTexture9 * replacementTexture = NULL;
 										if (sharedColorTextureHandle)
@@ -851,7 +993,7 @@ namespace AfxInterop {
 											}
 										}
 									}
-									if(sharedColorDepthTextureHandle != DrawingThread::m_Surface->AfxGetDepthSurface())
+									if(colorDepthTextureWasLost && NULL != sharedColorDepthTextureHandle)
 									{
 										IDirect3DTexture9 * replacementTexture = NULL;
 										if (sharedColorDepthTextureHandle)
@@ -889,9 +1031,13 @@ namespace AfxInterop {
 		Disconnect();
 	}
 
-	void DrawingThreadFinished()
+	void DrawingThread_On_DrawTranslucentRenderables(bool bInSkybox, bool bShadowDepth, bool afterCall)
 	{
 		if (!m_Enabled) return;
+
+		if (DrawingThread::m_Skip) return;
+
+		if (bInSkybox) return;
 
 		std::unique_lock<std::mutex> lock(DrawingThread::m_ConnectMutex);
 
@@ -899,7 +1045,67 @@ namespace AfxInterop {
 
 		int errorLine = 0;
 
-		if (!WriteInt32(DrawingThread::m_hPipe, DrawingThread::DrawingMessage_Finished)) { errorLine = __LINE__; goto locked_error; }
+		{
+			AfxD3D_WaitForGPU();
+
+			DrawingThread::DrawingMessage message = DrawingThread::DrawingMessage_Invalid;
+
+			if (true == bShadowDepth)
+			{
+				if (false == afterCall)
+				{
+					message = DrawingThread::DrawingMessage_BeforeTranslucentShadow;
+				}
+				else
+				{
+					message = DrawingThread::DrawingMessage_AfterTranslucentShadow;
+				}
+			}
+			else
+			{
+				if (false == afterCall)
+				{
+					message = DrawingThread::DrawingMessage_BeforeTranslucent;
+				}
+				else
+				{
+					message = DrawingThread::DrawingMessage_AfterTranslucent;
+				}
+			}
+
+			if (!WriteInt32(DrawingThread::m_hPipe, message)) { errorLine = __LINE__; goto locked_error; }
+
+			if (!Flush(DrawingThread::m_hPipe)) { errorLine = __LINE__; goto locked_error; }
+
+			bool done;
+			do {
+				if (!ReadBoolean(DrawingThread::m_hPipe, done)) { errorLine = __LINE__; goto locked_error; }
+			} while (!done);
+
+			return;
+		}
+	locked_error:
+		Tier0_Warning("AfxInterop::DrawingThread_On_DrawTanslucentRenderables: Error in line %i.\n", errorLine);
+		lock.unlock();
+		Disconnect();
+		return;
+	}
+	
+	void DrawingThread_BeforeHud(IAfxMatRenderContextOrg * context)
+	{
+		if (!m_Enabled) return;
+
+		if (DrawingThread::m_Skip) return;
+
+		std::unique_lock<std::mutex> lock(DrawingThread::m_ConnectMutex);
+
+		if (!DrawingThread::m_Connected) return;
+
+		int errorLine = 0;
+
+		AfxD3D_WaitForGPU();
+
+		if (!WriteInt32(DrawingThread::m_hPipe, DrawingThread::DrawingMessage_BeforeHud)) { errorLine = __LINE__; goto locked_error; }
 		if (!Flush(DrawingThread::m_hPipe)) { errorLine = __LINE__; goto locked_error; }
 
 		bool done;
@@ -910,24 +1116,17 @@ namespace AfxInterop {
 		return;
 
 	locked_error:
-		Tier0_Warning("AfxInterop::DrawingThreadFinished: Error in line %i.\n", errorLine);
+		Tier0_Warning("AfxInterop::DrawingThread_BeforeHud: Error in line %i.\n", errorLine);
 		lock.unlock();
 		Disconnect();
 		return;
 	}
 
-	bool GetDoingHud(void)
-	{
-		return DrawingThread::m_DoHud;
-	}
-
-	void DrawingThreadBeforeHud()
+	void DrawingThread_AfterHud(IAfxMatRenderContextOrg * context)
 	{
 		if (!m_Enabled) return;
 
-		if (!DrawingThread::m_DoHud) return;
-
-		DrawingThread::m_DoHud = false;
+		if (DrawingThread::m_Skip) return;
 
 		std::unique_lock<std::mutex> lock(DrawingThread::m_ConnectMutex);
 
@@ -935,9 +1134,9 @@ namespace AfxInterop {
 
 		int errorLine = 0;
 
-		AfxD3D_WaitForGPU(); // TODO: This is only required if Unity wants to render shit.
+		AfxD3D_WaitForGPU();
 
-		if (!WriteInt32(DrawingThread::m_hPipe, DrawingThread::DrawingMessage_DrawingThreadBeforeHud)) { errorLine = __LINE__; goto locked_error; }
+		if (!WriteInt32(DrawingThread::m_hPipe, DrawingThread::DrawingMessage_AfterHud)) { errorLine = __LINE__; goto locked_error; }
 		if (!Flush(DrawingThread::m_hPipe)) { errorLine = __LINE__; goto locked_error; }
 
 		bool done;
@@ -948,7 +1147,30 @@ namespace AfxInterop {
 		return;
 
 	locked_error:
-		Tier0_Warning("AfxInterop::DrawingThreadBeforeHud: Error in line %i.\n", errorLine);
+		Tier0_Warning("AfxInterop::DrawingThread_BeforeHud: Error in line %i.\n", errorLine);
+		lock.unlock();
+		Disconnect();
+		return;
+	}
+
+	void DrawingThread_OnRenderViewEnd()
+	{
+		if (!m_Enabled) return;
+
+		if (DrawingThread::m_Skip) return;
+
+		std::unique_lock<std::mutex> lock(DrawingThread::m_ConnectMutex);
+
+		if (!DrawingThread::m_Connected) return;
+
+		int errorLine = 0;
+
+		if (!WriteInt32(DrawingThread::m_hPipe, DrawingThread::DrawingMessage_OnRenderViewEnd)) { errorLine = __LINE__; goto locked_error; }
+
+		return;
+
+	locked_error:
+		Tier0_Warning("AfxInterop::DrawingThread_OnRenderViewEnd: Error in line %i.\n", errorLine);
 		lock.unlock();
 		Disconnect();
 		return;
@@ -1322,7 +1544,7 @@ namespace AfxInterop {
 			&& WriteUInt32(hFile, value);
 	}
 
-	bool WriteSingle(HANDLE hFile, float value)
+	bool WriteSingle(HANDLE hFile, FLOAT value)
 	{
 		return WriteBytes(hFile, &value, 0, sizeof(value));
 	}
