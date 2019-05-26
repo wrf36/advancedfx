@@ -10,6 +10,10 @@
 #include "csgo_Stdshader_dx9_Hooks.h"
 #include "CamIO.h"
 #include "MatRenderContextHook.h"
+#include "AfxImageBuffer.h"
+#include "AfxOutStreams.h"
+#include "AfxWriteFileLimiter.h"
+#include "AfxThreadedRefCounted.h"
 
 #define AFX_SHADERS_CSGO 0
 
@@ -111,105 +115,24 @@ int AfxStreams_RefTracker_Get(void);
 
 #endif
 
-class CAfxImageBuffer;
-
-class CAfxImageBufferPool
-{
-public:
-	CAfxImageBufferPool();
-
-	/// <remarks>Must not be called until all buffers are done.</remarks>
-	~CAfxImageBufferPool();
-
-	CAfxImageBuffer * AquireBuffer(void);
-
-	void ImageBuffer_Done(CAfxImageBuffer * buffer);
-
-private:
-	std::stack<CAfxImageBuffer *> m_Buffers;
-	std::mutex m_BuffersMutex;
-	std::condition_variable m_BufferAvailableCondition;
-};
-
-class CAfxImageBuffer
-{
-public:
-	enum ImageBufferPixelFormat
-	{
-		IBPF_BGR,
-		IBPF_BGRA,
-		IBPF_A,
-		IBPF_ZFloat
-	};
-
-	void * Buffer;
-
-	ImageBufferPixelFormat PixelFormat;
-	int Width;
-	int Height;
-	size_t ImagePitch;
-	size_t ImageBytes;
-
-	CAfxImageBuffer(CAfxImageBufferPool * pool);
-	~CAfxImageBuffer();
-
-	/// <summary>Releases the buffer back to the pool (it may not be used anymore until being aquired from the pool again).</summary>
-	void Release(void);
-
-	bool AutoRealloc(ImageBufferPixelFormat pixelFormat, int width, int height);
-	bool WriteToFile(const std::wstring & path, bool ifZip, bool ifBmpNotTga) const;
-
-	/// <summary>
-	/// Resizes and merges this BGR format buffer with the blue component of
-	/// an buffer of same Width, Height and ImagePitch.
-	/// On success the resulting format is BGRA
-	/// </summary>
-	bool BgrMergeBlueToRgba(CAfxImageBuffer const * alphaBuffer);
-
-private:
-	size_t m_BufferBytesAllocated;
-	CAfxImageBufferPool * m_Pool;
-};
-
-
 class CAfxRecordStream;
 
-class CAfxStreamShared
+class CAfxStreamShared : public CAfxThreadedRefCounted
 {
 public:
-	virtual ~CAfxStreamShared()
-	{
-	}
-
 	//
 	// Reference counting:
 
-	virtual int AddRef(bool mutex = false)
+	virtual int AddRef(bool mutex = false) override
 	{
 		AFXSTREAMS_REFTRACKER_INC
 
-		m_RefMutex.lock();
-
-		++m_RefCount;
-		int result = m_RefCount;
-
-		if (!mutex) m_RefMutex.unlock();
-
-		return m_RefCount;
+		return CAfxThreadedRefCounted::AddRef(mutex);
 	}
 
-	virtual int Release(bool mutex = false)
+	virtual int Release(bool mutex = false) override
 	{
-		if(!mutex) m_RefMutex.lock();
-
-		--m_RefCount;
-
-		int result = m_RefCount;
-
-		m_RefMutex.unlock();
-
-		if (0 == result)
-			delete this;
+		int result = CAfxThreadedRefCounted::Release(mutex);
 
 		AFXSTREAMS_REFTRACKER_DEC
 
@@ -346,27 +269,6 @@ private:
 	std::atomic_int m_RefCount;
 };
 
-
-class CAfxStreamUniqueLock
-{
-public:
-	CAfxStreamUniqueLock(CAfxStreamShared * stream)
-		: m_Stream(stream)
-	{
-		if (m_Stream)
-			m_Stream->AddRef(true);
-	}
-
-	~CAfxStreamUniqueLock()
-	{
-		if (m_Stream)
-			m_Stream->Release(true);
-	}
-
-private:
-	CAfxStreamShared * m_Stream;
-};
-
 IAfxMatRenderContext * GetCurrentContext();
 
 void QueueOrExecute(IAfxMatRenderContextOrg * ctx, SOURCESDK::CSGO::CFunctor * functor);
@@ -440,6 +342,7 @@ class CAfxRenderViewStream
 public:
 	enum StreamCaptureType
 	{
+		SCT_Invalid,
 		SCT_Normal,
 		SCT_Depth24,
 		SCT_Depth24ZIP,
@@ -486,7 +389,7 @@ public:
 		return 1.0f;
 	}
 
-	StreamCaptureType StreamCaptureType_get(void);
+	StreamCaptureType StreamCaptureType_get(void) const;
 	void StreamCaptureType_set(StreamCaptureType value);
 
 	bool ForceBuildingCubemaps_get(void)
@@ -556,6 +459,139 @@ private:
 class CAfxSingleStream;
 class CAfxTwinStream;
 
+class CAfxRecordingSettings : public CAfxThreadedRefCounted
+{
+public:
+	static CAfxRecordingSettings * GetClassic()
+	{
+		return m_Shared.m_ClassicSettings;
+	}
+
+	static CAfxRecordingSettings * GetByName(const char * name)
+	{
+		auto it = m_Shared.m_NamedSettings.find(name);
+
+		if (m_Shared.m_NamedSettings.end() != it)
+			return it->second.Settings;
+		else
+			return nullptr;
+	}
+
+	static void Console(IWrpCommandArgs * args);
+
+	CAfxRecordingSettings(const char * name, bool bProtected)
+		: m_Name(name)
+		, m_Protected(bProtected)
+	{
+	}
+
+	const char * GetName() const
+	{
+		return m_Name.c_str();
+	}
+
+	bool GetProtected() const
+	{
+		return m_Protected;
+	}
+
+	virtual void Console_Edit(IWrpCommandArgs * args) = 0;
+
+	virtual CAfxOutVideoStream * CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat) const = 0;
+
+protected:
+	std::string m_Name;
+	bool m_Protected;
+
+	struct CNamedSettingValue {
+		CAfxRecordingSettings * Settings;
+
+		CNamedSettingValue()
+			: Settings(nullptr)
+		{
+		}
+
+		CNamedSettingValue(CAfxRecordingSettings * settings)
+			: Settings(settings)
+		{
+			Settings->AddRef();
+		}
+
+		CNamedSettingValue(const CNamedSettingValue & copyFrom)
+			: Settings(copyFrom.Settings)
+		{
+			if (Settings) Settings->AddRef();
+		}
+
+		~CNamedSettingValue()
+		{
+			if(Settings) Settings->Release();
+		}
+	};
+
+	static struct CShared {
+		std::map<std::string, CNamedSettingValue> m_NamedSettings;
+		CAfxRecordingSettings * m_ClassicSettings;
+
+		CShared();
+		~CShared();
+
+		bool DeleteIfUnrefrenced(std::map<std::string, CNamedSettingValue>::iterator it)
+		{
+			if (it->second.Settings)
+			{
+				it->second.Settings->Lock();
+				if (1 == it->second.Settings->GetRefCount())
+				{
+					it->second.Settings->Release(true);
+					it->second.Settings = nullptr;
+					m_NamedSettings.erase(it);
+					return true;
+				}
+				else
+				{
+					it->second.Settings->Unlock();
+					return false;
+				}
+			}
+
+			m_NamedSettings.erase(it);
+			return true;
+		}
+	} m_Shared;
+};
+
+class CAfxClassicRecordingSettings : public CAfxRecordingSettings
+{
+public:
+	CAfxClassicRecordingSettings()
+		: CAfxRecordingSettings("afxClassic", true)
+	{
+	}
+
+	virtual void Console_Edit(IWrpCommandArgs * args) override;
+
+	virtual CAfxOutVideoStream * CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat) const override;
+};
+
+class CAfxFfmpegRecordingSettings : public CAfxRecordingSettings
+{
+public:
+	CAfxFfmpegRecordingSettings(const char * name, bool bProtected, const char * szFfmpegOptions)
+		: CAfxRecordingSettings(name, bProtected)
+		, m_FfmpegOptions(szFfmpegOptions)
+	{
+
+	}
+
+	virtual void Console_Edit(IWrpCommandArgs * args) override;
+
+	virtual CAfxOutVideoStream * CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat) const override;
+
+private:
+	std::string m_FfmpegOptions;
+};
+
 class CAfxRecordStream abstract
 : public CAfxStream
 {
@@ -567,7 +603,20 @@ public:
 	virtual CAfxSingleStream * AsAfxSingleStream(void) { return 0; }
 	virtual CAfxTwinStream * AsAfxTwinStream(void) { return 0; }
 
-	char const * StreamName_get(void);
+	CAfxRecordingSettings * GetSettings() const
+	{
+		return m_Settings;
+	}
+
+	void SetSettings(CAfxRecordingSettings * settings)
+	{
+		settings->AddRef();
+
+		m_Settings->Release();
+		m_Settings = settings;
+	}
+
+	char const * StreamName_get(void) const;
 
 	bool Record_get(void);
 	void Record_set(bool value);
@@ -575,31 +624,31 @@ public:
 	/// <remarks>This is called regardless of Record value.</remarks>
 	void RecordStart();
 
+	/// <remarks>This is called regardless of Record value.</remarks>
+	void RecordEnd();
+
 	void QueueCaptureStart(IAfxMatRenderContextOrg * ctx);
 
-	void QueueCaptureEnd(IAfxMatRenderContextOrg * ctx, const std::wstring & takeDir, int frameNumber, wchar_t const * fileExtension);
+	void QueueCaptureEnd(IAfxMatRenderContextOrg * ctx);
 
 	/// <remarks>This is not guaranteed to be called, i.e. not called upon buffer re-allocation error.</remarks>
 	virtual void OnImageBufferCaptured(CAfxRenderViewStream * stream, CAfxImageBuffer * buffer) = 0;
 
-	/// <remarks>This is called regardless of Record value.</remarks>
-	void RecordEnd();
+	virtual CAfxRenderViewStream::StreamCaptureType GetCaptureType() const = 0;
 
 protected:
+	CAfxRecordingSettings * m_Settings;
+	CAfxOutVideoStream * m_OutVideoStream;
+
+	virtual ~CAfxRecordStream() override
+	{
+		m_Settings->Release();
+	}
+
 	virtual void CaptureStart(void) = 0;
 
 	/// <param name="outPath">Can be 0 in case the path could not be created successfully.</param>
-	virtual void CaptureEnd(std::wstring const * outPath) = 0;
-
-	static void WriteFile_EnterScope(void)
-	{
-		m_Shared.WriteFile_EnterScope();	
-	}
-
-	static void WriteFile_ExitScope(void)
-	{
-		m_Shared.WriteFile_ExitScope();
-	}
+	virtual void CaptureEnd() = 0;
 
 private:
 	class CCaptureStartFunctor
@@ -625,15 +674,14 @@ private:
 		: public CAfxFunctor
 	{
 	public:
-		CCaptureEndFunctor(CAfxRecordStream & stream, const std::wstring & takeDir, int frameNumber, wchar_t const * fileExtension)
+		CCaptureEndFunctor(CAfxRecordStream & stream)
 			: m_Stream(stream)
 		{
-			m_OutPathOk = m_Stream.CreateCapturePath(takeDir, frameNumber, fileExtension, m_OutPath);
 		}
 
 		void operator()()
 		{
-			m_Stream.CaptureEnd(m_OutPathOk ? &m_OutPath : 0);
+			m_Stream.CaptureEnd();
 			m_Stream.Release();
 		}
 
@@ -643,49 +691,12 @@ private:
 		bool m_OutPathOk;
 	};
 
-	class CShared
-	{
-	public:
-		void WriteFile_EnterScope(void)
-		{
-			std::unique_lock<std::mutex> lock(m_WriteFileMutex);
-
-			m_WriteFileCondition.wait(lock, [this]() { return m_WriteFileCount < m_MaxInScope; });
-
-			++m_WriteFileCount;
-		}
-
-		void WriteFile_ExitScope(void)
-		{
-			{
-				std::unique_lock<std::mutex> lock(m_WriteFileMutex);
-				--m_WriteFileCount;
-			}
-
-			m_WriteFileCondition.notify_one();
-		}
-
-	private:
-		static const int m_MaxInScope = 2;
-		std::mutex m_WriteFileMutex;
-		std::condition_variable m_WriteFileCondition;
-		int m_WriteFileCount = 0;
-	};
-
-	static CShared m_Shared;
-
 	std::string m_StreamName;
-	std::wstring m_CapturePath;
 	bool m_Record;
-	bool m_TriedCreatePath;
-	bool m_SucceededCreatePath;
-
-	/// <remarks>This is only called between RecordStart and RecordEnd and only if Record is true.</remarks>
-	bool CreateCapturePath(const std::wstring & takeDir, int frameNumber, wchar_t const * fileExtension, std::wstring &outPath);
 };
 
 class CAfxSingleStream
-:  public CAfxRecordStream
+	: public CAfxRecordStream
 {
 public:
 	CAfxSingleStream(char const * streamName, CAfxRenderViewStream * stream);
@@ -698,13 +709,15 @@ public:
 
 	virtual void OnImageBufferCaptured(CAfxRenderViewStream * stream, CAfxImageBuffer * buffer);
 
+	virtual CAfxRenderViewStream::StreamCaptureType GetCaptureType() const override;
+
 protected:
 	virtual ~CAfxSingleStream();
 
 	virtual void CaptureStart(void);
 
 	/// <param name="outPath">Can be 0 in case the path could not be created successfully.</param>
-	virtual void CaptureEnd(std::wstring const * outPath);
+	virtual void CaptureEnd();
 
 private:
 	CAfxRenderViewStream * m_Stream;
@@ -715,7 +728,7 @@ private:
 };
 
 class CAfxTwinStream
-: public CAfxRecordStream
+	: public CAfxRecordStream
 {
 public:
 	enum StreamCombineType
@@ -740,13 +753,15 @@ public:
 
 	virtual void OnImageBufferCaptured(CAfxRenderViewStream * stream, CAfxImageBuffer * buffer);
 
+	virtual CAfxRenderViewStream::StreamCaptureType GetCaptureType() const override;
+
 protected:
 	virtual ~CAfxTwinStream();
 
 	virtual void CaptureStart(void);
 
 	/// <param name="outPath">Can be 0 in case the path could not be created successfully.</param>
-	virtual void CaptureEnd(std::wstring const * outPath);
+	virtual void CaptureEnd();
 
 private:
 	CAfxRenderViewStream * m_StreamA;
@@ -1135,7 +1150,6 @@ protected:
 		std::map<CActionKey, CAction *> m_Actions;
 		CAction * m_DrawAction = 0;
 		CAction * m_NoDrawAction = 0;
-		CAction * m_DebugDumpAction = 0;
 		CAction * m_DepthAction = 0;
 		//CAction * m_Depth24Action = 0;
 		CAction * m_MaskAction = 0;
@@ -1187,16 +1201,6 @@ protected:
 	void SetAction(CAction * & target, CAction * src);
 
 private:
-	class CActionDebugDump
-	: public CAction
-	{
-	public:
-		CActionDebugDump()
-		{
-		}
-
-		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch);
-	};
 
 #if AFX_SHADERS_CSGO
 	class CActionAfxVertexLitGenericHookKey
@@ -2617,17 +2621,20 @@ public:
 	bool Console_ToAfxAction(char const * value, CAfxBaseFxStream::CAction * & action);
 	char const * Console_FromAfxAction(CAfxBaseFxStream::CAction * action);
 
-	void DebugDump(IAfxMatRenderContextOrg * ctxp);
-
 	virtual SOURCESDK::IMaterialSystem_csgo * GetMaterialSystem(void);
 	virtual SOURCESDK::IShaderShadow_csgo * GetShaderShadow(void);
 
-	virtual std::wstring GetTakeDir(void);
+	const std::wstring & GetTakeDir(void) const;
 
 	void LevelInitPostEntity(void);
 	void LevelShutdown(void);
 
 	virtual void View_Render(IAfxBaseClientDll * cl, SOURCESDK::vrect_t_csgo *rect);
+
+	float GetStartHostFrameRate()
+	{
+		return m_StartHostFrameRateValue;
+	}
 
 private:
 	class CEntityBvhCapture
@@ -2711,6 +2718,7 @@ private:
 	bool m_GameRecording;
 
 	WrpConVarRef * m_HostFrameRate = nullptr;
+	float m_StartHostFrameRateValue = 0.0f;
 
 	WrpConVarRef * m_MatPostProcessEnableRef = nullptr;
 	int m_OldMatPostProcessEnable;

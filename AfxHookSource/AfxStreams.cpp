@@ -17,11 +17,10 @@
 #include "mirv_voice.h"
 #include "addresses.h"
 #include "MirvTime.h"
+#include "SourceInterfaces.h"
 
 #include <shared/StringTools.h>
 #include <shared/FileTools.h>
-#include <shared/RawOutput.h>
-#include <shared/OpenExrOutput.h>
 
 #include <Windows.h>
 
@@ -557,7 +556,7 @@ void CAfxRenderViewStream::DrawViewModel_set(DrawType value)
 	m_DrawViewModel = value;
 }
 
-CAfxRenderViewStream::StreamCaptureType CAfxRenderViewStream::StreamCaptureType_get(void)
+CAfxRenderViewStream::StreamCaptureType CAfxRenderViewStream::StreamCaptureType_get(void) const
 {
 	return m_StreamCaptureType;
 }
@@ -582,10 +581,10 @@ void CAfxRenderViewStream::Capture(CAfxRecordStream * captureTarget, int x, int 
 
 	if(isDepthF)
 	{
-		if(buffer->AutoRealloc(CAfxImageBuffer::IBPF_ZFloat, width, height))
+		if(buffer->AutoRealloc(CAfxImageFormat(CAfxImageFormat::PF_ZFloat, width, height)))
 		{
 			unsigned char * pBuffer = (unsigned char*)buffer->Buffer;
-			int imagePitch = buffer->ImagePitch;
+			int imagePitch = buffer->Format.Pitch;
 
 			ctx->ReadPixels(
 				x, y, width, height,
@@ -627,10 +626,10 @@ void CAfxRenderViewStream::Capture(CAfxRecordStream * captureTarget, int x, int 
 		}
 	}
 	else
-	if(buffer->AutoRealloc(CAfxImageBuffer::IBPF_BGR, width, height))
+	if(buffer->AutoRealloc(CAfxImageFormat(CAfxImageFormat::PF_BGR, width, height)))
 	{
 		unsigned char * pBuffer = (unsigned char*)buffer->Buffer;
-		int imagePitch = buffer->ImagePitch;
+		int imagePitch = buffer->Format.Pitch;
 
 		ctx->ReadPixels(
 			x, y, width, height,
@@ -652,10 +651,10 @@ void CAfxRenderViewStream::Capture(CAfxRecordStream * captureTarget, int x, int 
 			int oldImagePitch =  imagePitch;
 
 			// make the 24bit RGB into a float buffer:
-			if(buffer->AutoRealloc(CAfxImageBuffer::IBPF_ZFloat, width, height))
+			if(buffer->AutoRealloc(CAfxImageFormat(CAfxImageFormat::PF_ZFloat, width, height)))
 			{
 				unsigned char * pBuffer = (unsigned char*)buffer->Buffer;
-				int imagePitch = buffer->ImagePitch;
+				int imagePitch = buffer->Format.Pitch;
 
 				for(int y = height-1; y >= 0; --y)
 				{
@@ -746,12 +745,11 @@ void CAfxRenderViewStream::CCaptureFunctor::operator()()
 
 // CAfxRecordStream ////////////////////////////////////////////////////////////
 
-CAfxRecordStream::CShared CAfxRecordStream::m_Shared;
-
 CAfxRecordStream::CAfxRecordStream(char const * streamName)
-: CAfxStream()
-, m_StreamName(streamName)
-, m_Record(true)
+	: CAfxStream()
+	, m_StreamName(streamName)
+	, m_Record(true)
+	, m_OutVideoStream(nullptr)
 {
 
 }
@@ -768,55 +766,21 @@ void CAfxRecordStream::Record_set(bool value)
 
 void CAfxRecordStream::RecordStart()
 {
-	m_TriedCreatePath = false;
-	m_SucceededCreatePath = false;
-}
-
-bool CAfxRecordStream::CreateCapturePath(const std::wstring & takeDir, int frameNumber, wchar_t const * fileExtension, std::wstring &outPath)
-{
-	if(!m_TriedCreatePath)
+	if (m_Record)
 	{
-		m_TriedCreatePath = true;
-		std::wstring wideStreamName;
-		if(UTF8StringToWideString(m_StreamName.c_str(), wideStreamName))
-		{
-			m_CapturePath = takeDir;
-			m_CapturePath.append(L"\\");
-			m_CapturePath.append(wideStreamName);
-
-			bool dirCreated = CreatePath(m_CapturePath.c_str(), m_CapturePath);
-			if(dirCreated)
-			{
-				m_SucceededCreatePath = true;
-			}
-			else
-			{
-				Tier0_Warning("ERROR: could not create \"%s\"\n", m_CapturePath.c_str());
-			}
-		}
-		else
-		{
-			Tier0_Warning("Error: Failed to convert stream name \"%s\" to a wide string.\n", m_StreamName.c_str());
-		}
 	}
-
-	if(!m_SucceededCreatePath)
-		return false;
-
-	std::wostringstream os;
-	os << m_CapturePath << L"\\" << std::setfill(L'0') << std::setw(5) << frameNumber << std::setw(0) << fileExtension;
-
-	outPath = os.str();
-
-	return true;
 }
 
 void CAfxRecordStream::RecordEnd()
 {
-
+	if (m_OutVideoStream)
+	{
+		m_OutVideoStream->Release();
+		m_OutVideoStream = nullptr;
+	}
 }
 
-char const * CAfxRecordStream::StreamName_get(void)
+char const * CAfxRecordStream::StreamName_get(void) const
 {
 	return m_StreamName.c_str();
 }
@@ -826,9 +790,9 @@ void CAfxRecordStream::QueueCaptureStart(IAfxMatRenderContextOrg * ctx)
 	QueueOrExecute(ctx, new CAfxLeafExecute_Functor(new CCaptureStartFunctor(*this)));
 }
 
-void CAfxRecordStream::QueueCaptureEnd(IAfxMatRenderContextOrg * ctx, const std::wstring & takeDir, int frameNumber, wchar_t const * fileExtension)
+void CAfxRecordStream::QueueCaptureEnd(IAfxMatRenderContextOrg * ctx)
 {
-	QueueOrExecute(ctx, new CAfxLeafExecute_Functor(new CCaptureEndFunctor(*this, takeDir, frameNumber, fileExtension)));
+	QueueOrExecute(ctx, new CAfxLeafExecute_Functor(new CCaptureEndFunctor(*this)));
 }
 
 
@@ -841,6 +805,9 @@ CAfxSingleStream::CAfxSingleStream(char const * streamName, CAfxRenderViewStream
 	m_Stream->AddRef();
 
 	m_CaptureCondition.notify_one();
+
+	m_Settings = CAfxRecordingSettings::GetClassic();
+	m_Settings->AddRef();
 }
 
 CAfxSingleStream::~CAfxSingleStream()
@@ -880,7 +847,7 @@ void CAfxSingleStream::CaptureStart(void)
 	m_Buffer = 0;
 }
 
-void CAfxSingleStream::CaptureEnd(std::wstring const * outPath)
+void CAfxSingleStream::CaptureEnd()
 {
 	CAfxImageBuffer * buffer = m_Buffer;
 
@@ -893,22 +860,31 @@ void CAfxSingleStream::CaptureEnd(std::wstring const * outPath)
 
 	if (buffer)
 	{
-		if (outPath)
+		if (nullptr == m_OutVideoStream)
 		{
-			CAfxRenderViewStream::StreamCaptureType captureType = m_Stream->StreamCaptureType_get();
-
-			WriteFile_EnterScope();
-			
-			if (!buffer->WriteToFile(*outPath, (captureType == CAfxRenderViewStream::SCT_Depth24ZIP || captureType == CAfxRenderViewStream::SCT_DepthFZIP), g_AfxStreams.m_FormatBmpAndNotTga))
+			m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, buffer->Format);
+			if (nullptr == m_OutVideoStream)
 			{
-				Tier0_Warning("AFXERROR: Failed writing image for stream %s\n.", this->StreamName_get());
+				Tier0_Warning("AFXERROR: Failed to create out video stream for %s.\n", this->StreamName_get());
 			}
+			else
+			{
+				m_OutVideoStream->AddRef();
+			}
+		}
 
-			WriteFile_ExitScope();
+		if (nullptr != m_OutVideoStream && !m_OutVideoStream->SupplyVideoData(*buffer))
+		{
+			Tier0_Warning("AFXERROR: Failed writing image for stream %s.\n", this->StreamName_get());
 		}
 
 		buffer->Release();
 	}
+}
+
+CAfxRenderViewStream::StreamCaptureType CAfxSingleStream::GetCaptureType() const
+{
+	return m_Stream->StreamCaptureType_get();
 }
 
 
@@ -922,6 +898,11 @@ CAfxTwinStream::CAfxTwinStream(char const * streamName, CAfxRenderViewStream * s
 {
 	m_StreamA->AddRef();
 	m_StreamB->AddRef();
+
+	m_CaptureCondition.notify_one();
+
+	m_Settings = CAfxRecordingSettings::GetClassic();
+	m_Settings->AddRef();
 }
 
 CAfxTwinStream::~CAfxTwinStream()
@@ -981,11 +962,29 @@ void CAfxTwinStream::CaptureStart(void)
 	m_BufferB = 0;
 }
 
-void CAfxTwinStream::CaptureEnd(std::wstring const * outPath)
+CAfxRenderViewStream::StreamCaptureType CAfxTwinStream::GetCaptureType() const
+{
+	if (CAfxTwinStream::SCT_ARedAsAlphaBColor == m_StreamCombineType)
+	{
+		return m_StreamB->StreamCaptureType_get();
+	}
+	else if (CAfxTwinStream::SCT_AColorBRedAsAlpha == m_StreamCombineType)
+	{
+		return  m_StreamA->StreamCaptureType_get();
+	}
+	else if (CAfxTwinStream::SCT_AHudWhiteBHudBlack == m_StreamCombineType)
+	{
+		return m_StreamA->StreamCaptureType_get();
+	}
+
+	return CAfxRenderViewStream::SCT_Invalid;
+}
+
+void CAfxTwinStream::CaptureEnd()
 {
 	CAfxImageBuffer * bufferA = m_BufferA;
 	CAfxImageBuffer * bufferB = m_BufferB;
-	CAfxRenderViewStream::StreamCaptureType captureType;
+	//CAfxRenderViewStream::StreamCaptureType captureType;
 
 	enum ECombineOp {
 		ECombineOp_None,
@@ -996,21 +995,21 @@ void CAfxTwinStream::CaptureEnd(std::wstring const * outPath)
 	if (CAfxTwinStream::SCT_ARedAsAlphaBColor == m_StreamCombineType)
 	{
 		bufferA = m_BufferB;
-		captureType = m_StreamB->StreamCaptureType_get();
+		//captureType = m_StreamB->StreamCaptureType_get();
 		bufferB = m_BufferA;
 		combineOp = ECombineOp_AColorBRedAsAlpha;
 	}
 	else if (CAfxTwinStream::SCT_AColorBRedAsAlpha == m_StreamCombineType)
 	{
 		bufferA = m_BufferA;
-		captureType = m_StreamA->StreamCaptureType_get();
+		//captureType = m_StreamA->StreamCaptureType_get();
 		bufferB = m_BufferB;
 		combineOp = ECombineOp_AColorBRedAsAlpha;
 	}
 	else if (CAfxTwinStream::SCT_AHudWhiteBHudBlack == m_StreamCombineType)
 	{
 		bufferA = m_BufferA;
-		captureType = m_StreamA->StreamCaptureType_get();
+		//captureType = m_StreamA->StreamCaptureType_get();
 		bufferB = m_BufferB;
 		combineOp = ECombineOp_AHudWhiteBHudBlack;
 	}
@@ -1022,7 +1021,7 @@ void CAfxTwinStream::CaptureEnd(std::wstring const * outPath)
 
 	m_CaptureCondition.notify_one();
 
-	bool canCombine = outPath && bufferA && bufferB;
+	bool canCombine = bufferA && bufferB;
 
 	if (canCombine)
 	{
@@ -1033,21 +1032,21 @@ void CAfxTwinStream::CaptureEnd(std::wstring const * outPath)
 				int orgImagePitch;
 
 				canCombine =
-					bufferA->Width == bufferB->Width
-					&& bufferA->Height == bufferB->Height
-					&& bufferA->PixelFormat == bufferA->IBPF_BGR
-					&& bufferA->PixelFormat == bufferB->PixelFormat
-					&& (orgImagePitch = bufferA->ImagePitch) == bufferB->ImagePitch
-					&& bufferA->AutoRealloc(bufferA->IBPF_BGRA, bufferA->Width, bufferA->Height)
+					bufferA->Format.Width == bufferB->Format.Width
+					&& bufferA->Format.Height == bufferB->Format.Height
+					&& bufferA->Format.PixelFormat == CAfxImageFormat::PF_BGR
+					&& bufferA->Format.PixelFormat == bufferB->Format.PixelFormat
+					&& (orgImagePitch = bufferA->Format.Pitch) == bufferB->Format.Pitch
+					&& bufferA->AutoRealloc(CAfxImageFormat(CAfxImageFormat::PF_BGRA, bufferA->Format.Width, bufferA->Format.Height))
 					;
 
 				if (canCombine)
 				{
 					// interleave B as alpha into A:
 
-					int height = bufferA->Height;
-					int width = bufferA->Width;
-					int newImagePitchA = bufferA->ImagePitch;
+					int height = bufferA->Format.Height;
+					int width = bufferA->Format.Width;
+					int newImagePitchA = bufferA->Format.Pitch;
 
 					unsigned char * pBufferA = (unsigned char *)(bufferA->Buffer);
 					unsigned char * pBufferB = (unsigned char *)(bufferB->Buffer);
@@ -1068,14 +1067,23 @@ void CAfxTwinStream::CaptureEnd(std::wstring const * outPath)
 						}
 					}
 
-					WriteFile_EnterScope();
+					if (nullptr == m_OutVideoStream)
+					{
+						m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferA->Format);
+						if (nullptr == m_OutVideoStream)
+						{
+							Tier0_Warning("AFXERROR: Failed to create out video stream for %s.\n", this->StreamName_get());
+						}
+						else
+						{
+							m_OutVideoStream->AddRef();
+						}
+					}
 
-					if (!bufferA->WriteToFile(*outPath, (captureType == CAfxRenderViewStream::SCT_Depth24ZIP || captureType == CAfxRenderViewStream::SCT_DepthFZIP), g_AfxStreams.m_FormatBmpAndNotTga))
+					if(nullptr != m_OutVideoStream && !m_OutVideoStream->SupplyVideoData(*bufferA))
 					{
 						Tier0_Warning("AFXERROR: Failed writing image for stream %s\n.", this->StreamName_get());
 					}
-
-					WriteFile_ExitScope();
 				}
 			}
 			break;
@@ -1084,19 +1092,19 @@ void CAfxTwinStream::CaptureEnd(std::wstring const * outPath)
 				int orgImagePitch;
 
 				canCombine =
-					bufferA->Width == bufferB->Width
-					&& bufferA->Height == bufferB->Height
-					&& bufferA->PixelFormat == bufferA->IBPF_BGR
-					&& bufferA->PixelFormat == bufferB->PixelFormat
-					&& (orgImagePitch = bufferA->ImagePitch) == bufferB->ImagePitch
-					&& bufferA->AutoRealloc(bufferA->IBPF_BGRA, bufferA->Width, bufferA->Height)
+					bufferA->Format.Width == bufferB->Format.Width
+					&& bufferA->Format.Height == bufferB->Format.Height
+					&& bufferA->Format.PixelFormat == CAfxImageFormat::PF_BGR
+					&& bufferA->Format.PixelFormat == bufferB->Format.PixelFormat
+					&& (orgImagePitch = bufferA->Format.Pitch) == bufferB->Format.Pitch
+					&& bufferA->AutoRealloc(CAfxImageFormat(CAfxImageFormat::PF_BGRA, bufferA->Format.Width, bufferA->Format.Height))
 					;
 
 				if (canCombine)
 				{
-					int height = bufferA->Height;
-					int width = bufferA->Width;
-					int newImagePitchA = bufferA->ImagePitch;
+					int height = bufferA->Format.Height;
+					int width = bufferA->Format.Width;
+					int newImagePitchA = bufferA->Format.Pitch;
 
 					unsigned char * pBufferA = (unsigned char *)(bufferA->Buffer);
 					unsigned char * pBufferB = (unsigned char *)(bufferB->Buffer);
@@ -1154,14 +1162,16 @@ void CAfxTwinStream::CaptureEnd(std::wstring const * outPath)
 						}
 					}
 
-					WriteFile_EnterScope();
+					if (nullptr == m_OutVideoStream)
+					{
+						m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferA->Format);
+						m_OutVideoStream->AddRef();
+					}
 
-					if (!bufferA->WriteToFile(*outPath, (captureType == CAfxRenderViewStream::SCT_Depth24ZIP || captureType == CAfxRenderViewStream::SCT_DepthFZIP), g_AfxStreams.m_FormatBmpAndNotTga))
+					if (!m_OutVideoStream->SupplyVideoData(*bufferA))
 					{
 						Tier0_Warning("AFXERROR: Failed writing image for stream %s\n.", this->StreamName_get());
 					}
-
-					WriteFile_ExitScope();
 				}
 			}
 			break;
@@ -2721,8 +2731,6 @@ void CAfxBaseFxStream::CShared::AfxStreamsInit(void)
 	CreateStdAction(m_DrawAction, CActionKey("draw"), new CAction());
 	CreateStdAction(m_NoDrawAction, CActionKey("noDraw"), new CActionNoDraw());
 
-	CreateStdAction(m_DebugDumpAction, CActionKey("debugDump (don't use)"), new CActionDebugDump());
-
 	CreateStdAction(m_DepthAction, CActionKey("drawDepth"), new CActionDebugDepth(m_NoDrawAction));
 	// CreateStdAction(m_DepthAction, CActionKey("drawDepth"), new CActionStandardResolve(CActionStandardResolve::RF_DrawDepth, m_NoDrawAction));
 
@@ -2768,7 +2776,6 @@ void CAfxBaseFxStream::CShared::AfxStreamsShutdown(void)
 
 	if (m_DrawAction) m_DrawAction->Release();
 	if (m_NoDrawAction) m_NoDrawAction->Release();
-	if (m_DebugDumpAction) m_DebugDumpAction->Release();
 	if (m_DepthAction) m_DepthAction->Release();
 	/*
 	if(m_Depth24Action) m_Depth24Action->Release();
@@ -3270,13 +3277,6 @@ void CAfxBaseFxStream::CActionDebugDepth::CStatic::SetDepthVal(float min, float 
 	m_MatDebugDepthValMax->SetValueFastHack(max);
 
 	m_MatDebugDepthValsMutex.unlock();
-}
-
-// CAfxBaseFxStream::CActionDebugDump //////////////////////////////////////////
-
-void CAfxBaseFxStream::CActionDebugDump::AfxUnbind(CAfxBaseFxStreamContext * ch)
-{
-	g_AfxStreams.DebugDump(ch->GetCtx()->GetOrg());
 }
 
 // CAfxBaseFxStream::CActionReplace ////////////////////////////////////////////
@@ -5542,6 +5542,8 @@ void CAfxStreams::Console_Record_Start()
 		if (!m_HostFrameRate)
 			m_HostFrameRate = new WrpConVarRef("host_framerate");
 
+		m_StartHostFrameRateValue = m_HostFrameRate->GetFloat();
+
 		double frameTime = m_HostFrameRate->GetFloat();
 		if (1.0 <= frameTime) frameTime = 1.0 / frameTime;
 
@@ -5928,7 +5930,8 @@ void CAfxStreams::Console_RemoveStream(const char * streamName)
 
 			m_Streams.erase(it);
 
-			cur->Release();
+			cur->WaitLastRefAndLock();
+			cur->Release(true);
 
 			return;
 		}
@@ -6046,7 +6049,7 @@ void CAfxStreams::Console_EditStream(CAfxStream * stream, IWrpCommandArgs * args
 	CAfxTwinStream * curTwin = 0;
 	CAfxRenderViewStream * curRenderView = 0;
 
-	CAfxStreamUniqueLock afxStreamInterLock(cur);
+	CAfxThreadedRefCountedUniqueLock afxStreamInterLock(cur);
 	
 	if(cur)
 	{
@@ -6150,6 +6153,33 @@ void CAfxStreams::Console_EditStream(CAfxStream * stream, IWrpCommandArgs * args
 				);
 				return;
 			}
+			else if (0 == _stricmp("settings", cmd0))
+			{
+				if (2 <= argc)
+				{
+					char const * cmd1 = args->ArgV(argcOffset + 1);
+
+					if (CAfxRecordingSettings * settings = CAfxRecordingSettings::GetByName(cmd1))
+					{
+						curRecord->SetSettings(settings);
+					}
+					else
+					{
+						Tier0_Warning("AFXERROR: There is no recording setting named %s\n", cmd1);
+					}
+
+					return;
+				}
+
+				Tier0_Msg(
+					"%s settings <name> - Set recording settings to use from mirv_streams settings.\n"
+					"Current value: %s\n"
+					, cmdPrefix
+					, curRecord->GetSettings()->GetName()
+				);
+
+				return;
+			}
 		}
 	}
 
@@ -6174,7 +6204,8 @@ void CAfxStreams::Console_EditStream(CAfxStream * stream, IWrpCommandArgs * args
 	if (curRecord)
 	{
 		Tier0_Msg("-- record properties --\n");
-		Tier0_Msg("%s record [...] - Controlls whether or not this stream is recorded with mirv_streams record.\n", cmdPrefix);
+		Tier0_Msg("%s record [...] - Controls whether or not this stream is recorded with mirv_streams record.\n", cmdPrefix);
+		Tier0_Msg("%s settings [...] - Recording settings to use.\n", cmdPrefix);
 	}
 
 	if (cur)
@@ -6188,7 +6219,7 @@ bool CAfxStreams::Console_EditStream(CAfxRenderViewStream * stream, IWrpCommandA
 	CAfxRenderViewStream * curRenderView = stream;
 	CAfxBaseFxStream * curBaseFx = 0;
 	
-	CAfxStreamUniqueLock afxRenderViewStreamInterLock(curRenderView);
+	CAfxThreadedRefCountedUniqueLock afxRenderViewStreamInterLock(curRenderView);
 
 	if(curRenderView)
 	{
@@ -7605,7 +7636,7 @@ SOURCESDK::IShaderShadow_csgo * CAfxStreams::GetShaderShadow(void)
 	return m_ShaderShadow;
 }
 
-std::wstring CAfxStreams::GetTakeDir(void)
+const std::wstring & CAfxStreams::GetTakeDir(void) const
 {
 	return m_TakeDir;
 }
@@ -7626,90 +7657,6 @@ void CAfxStreams::LevelShutdown()
 }
 
 extern bool g_bD3D9DebugPrint;
-
-void CAfxStreams::DebugDump(IAfxMatRenderContextOrg * ctxp)
-{
-	bool isRgba = true;
-
-	int width = 1280;
-	int height = 720;
-
-	CAfxImageBuffer * buffer = ImageBufferPool.AquireBuffer();
-
-	if(buffer->AutoRealloc(isRgba ? buffer->IBPF_BGRA : buffer->IBPF_BGR, width, height))
-	{
-		ctxp->ReadPixels(
-			0, 0,
-			width, height,
-			(unsigned char*)buffer->Buffer,
-			isRgba ? SOURCESDK::IMAGE_FORMAT_RGBA8888 : SOURCESDK::IMAGE_FORMAT_RGB888
-		);
-
-		// (back) transform to MDT native format:
-		{
-			int lastLine = height >> 1;
-			if(height & 0x1) ++lastLine;
-
-			for(int y=0;y<lastLine;++y)
-			{
-				int srcLine = y;
-				int dstLine = height -1 -y;
-
-				if(isRgba)
-				{
-					for(int x=0;x<width;++x)
-					{
-						unsigned char r = ((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +0];
-						unsigned char g = ((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +1];
-						unsigned char b = ((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +2];
-						unsigned char a = ((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +3];
-									
-						((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +0] = ((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +2];
-						((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +1] = ((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +1];
-						((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +2] = ((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +0];
-						((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +4*x +3] = ((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +3];
-
-						((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +0] = b;
-						((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +1] = g;
-						((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +2] = r;
-						((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +4*x +3] = a;
-					}
-				}
-				else
-				{
-					for(int x=0;x<width;++x)
-					{
-						unsigned char r = ((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +3*x +0];
-						unsigned char g = ((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +3*x +1];
-						unsigned char b = ((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +3*x +2];
-									
-						((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +3*x +0] = ((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +3*x +2];
-						((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +3*x +1] = ((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +3*x +1];
-						((unsigned char *)buffer->Buffer)[dstLine*buffer->ImagePitch +3*x +2] = ((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +3*x +0];
-									
-						((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +3*x +0] = b;
-						((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +3*x +1] = g;
-						((unsigned char *)buffer->Buffer)[srcLine*buffer->ImagePitch +3*x +2] = r;
-					}
-				}
-			}
-		}
-
-		// Write to disk:
-		{
-			std::wstring path = L"debug.tga";
-			if(!buffer->WriteToFile(path, false, false))
-			{
-				Tier0_Warning("CAfxStreams::DebugDump:Failed writing image for frame #%i\n.", m_Frame);
-			}
-		}
-	}
-	else
-	{
-		Tier0_Warning("CAfxStreams::DebugDump: Failed to realloc m_BufferA.\n");
-	}
-
-}
 
 MirvPgl::CamData GetMirvPglCamData(SOURCESDK::vrect_t_csgo *rect) {
 	return MirvPgl::CamData(
@@ -7946,7 +7893,7 @@ IAfxMatRenderContextOrg * CAfxStreams::CaptureStreamToBuffer(IAfxMatRenderContex
 
 	if (last)
 	{
-		captureTarget->QueueCaptureEnd(ctxp, m_TakeDir, m_Frame, (captureType == CAfxRenderViewStream::SCT_Depth24 || captureType == CAfxRenderViewStream::SCT_Depth24ZIP || captureType == CAfxRenderViewStream::SCT_DepthF || captureType == CAfxRenderViewStream::SCT_DepthFZIP) ? L".exr" : (m_FormatBmpAndNotTga ? L".bmp" : L".tga"));
+		captureTarget->QueueCaptureEnd(ctxp);
 	}
 
 	if (!m_PresentRecordOnScreen)
@@ -8220,185 +8167,6 @@ IAfxStreamContext * CAfxStreams::FindStreamContext(IAfxMatRenderContext * ctx)
 	return ctx->Hook_get();
 }
 
-// CAfxImageBufferPool /////////////////////////////////////////////////////////
-
-CAfxImageBufferPool::CAfxImageBufferPool()
-{
-	for (int i = 0; i < 3; ++i)
-	{
-		m_Buffers.push(new CAfxImageBuffer(this));
-	}
-
-	m_BufferAvailableCondition.notify_one();
-}
-
-CAfxImageBufferPool::~CAfxImageBufferPool()
-{
-	while (!m_Buffers.empty())
-	{
-		delete m_Buffers.top();
-		m_Buffers.pop();
-	}
-}
-
-CAfxImageBuffer * CAfxImageBufferPool::AquireBuffer(void)
-{
-	std::unique_lock<std::mutex> lock(m_BuffersMutex);
-
-	m_BufferAvailableCondition.wait(lock, [this]() { return !m_Buffers.empty(); });
-
-	CAfxImageBuffer * result = m_Buffers.top();
-
-	m_Buffers.pop();
-
-	return result;
-}
-
-void CAfxImageBufferPool::ImageBuffer_Done(CAfxImageBuffer * buffer)
-{
-	{
-		std::unique_lock<std::mutex> lock(m_BuffersMutex);
-
-		m_Buffers.push(buffer);
-	}
-
-	m_BufferAvailableCondition.notify_one();
-}
-
-// CAfxImageBuffer /////////////////////////////////////////////////////////////
-
-CAfxImageBuffer::CAfxImageBuffer(CAfxImageBufferPool * pool)
-: Buffer(0)
-, m_BufferBytesAllocated(0)
-, m_Pool(pool)
-{
-}
-
-CAfxImageBuffer::~CAfxImageBuffer()
-{
-	free(Buffer);
-}
-
-void CAfxImageBuffer::Release(void)
-{
-	m_Pool->ImageBuffer_Done(this);
-}
-
-bool CAfxImageBuffer::AutoRealloc(ImageBufferPixelFormat pixelFormat, int width, int height)
-{
-	size_t pitch = width;
-
-	switch(pixelFormat)
-	{
-	case IBPF_BGR:
-		pitch *= 3 * sizeof(char);
-		break;
-	case IBPF_BGRA:
-		pitch *= 4 * sizeof(char);
-		break;
-	case IBPF_A:
-		pitch *= 1 * sizeof(char);
-		break;
-	case IBPF_ZFloat:
-		pitch *= 1 * sizeof(float);
-		break;
-	default:
-		Tier0_Warning("CAfxImageBuffer::AutoRealloc: Unsupported pixelFormat\n");
-		return false;
-	}
-
-	size_t imageBytes = pitch * height;
-
-	if( !Buffer || m_BufferBytesAllocated < imageBytes)
-	{
-		Buffer = realloc(Buffer, imageBytes);
-		if(Buffer)
-		{
-			m_BufferBytesAllocated = imageBytes;
-		}
-	}
-
-	m_BufferBytesAllocated = imageBytes;
-	PixelFormat = pixelFormat;
-	Width = width;
-	Height = height;
-	ImagePitch = pitch;
-	ImageBytes = imageBytes;
-
-	return 0 != Buffer;
-}
-
-
-bool CAfxImageBuffer::WriteToFile(const std::wstring & path, bool ifZip, bool ifBmpNotTga) const
-{
-	if (IBPF_ZFloat == PixelFormat)
-	{
-		return WriteFloatZOpenExr(
-			path.c_str(),
-			(unsigned char*)Buffer,
-			Width,
-			Height,
-			sizeof(float),
-			ImagePitch,
-			ifZip ? WFZOEC_Zip : WFZOEC_None
-		);
-	}
-
-	if (IBPF_A == PixelFormat)
-	{
-		return ifBmpNotTga
-			? WriteRawBitmap((unsigned char*)Buffer, path.c_str(), Width, Height, 8, ImagePitch)
-			: WriteRawTarga((unsigned char*)Buffer, path.c_str(), Width, Height, 8, true, ImagePitch, 0)
-			;
-	}
-
-	bool isBgra = IBPF_BGRA == PixelFormat;
-
-	return ifBmpNotTga && !isBgra
-		? WriteRawBitmap((unsigned char*)Buffer, path.c_str(), Width, Height, 24, ImagePitch)
-		: WriteRawTarga((unsigned char*)Buffer, path.c_str(), Width, Height, isBgra ? 32 : 24, false, ImagePitch, isBgra ? 8 : 0)
-		;
-}
-
-bool CAfxImageBuffer::BgrMergeBlueToRgba(CAfxImageBuffer const * alphaBuffer)
-{
-	bool ok = alphaBuffer
-		&& Width == alphaBuffer->Width
-		&& Height == alphaBuffer->Height
-		&& PixelFormat == IBPF_BGR
-		&& PixelFormat == alphaBuffer->PixelFormat
-		&& ImagePitch == alphaBuffer->ImagePitch
-		&& AutoRealloc(IBPF_BGRA, Width, Height)
-		;
-
-	if (ok)
-	{
-		// interleave B as alpha into A:
-
-		for (int y = Height - 1;y >= 0;--y)
-		{
-			for (int x = Width - 1;x >= 0;--x)
-			{
-				unsigned char b = ((unsigned char *)Buffer)[y*ImagePitch + x * 3 + 0];
-				unsigned char g = ((unsigned char *)Buffer)[y*ImagePitch + x * 3 + 1];
-				unsigned char r = ((unsigned char *)Buffer)[y*ImagePitch + x * 3 + 2];
-				unsigned char a = ((unsigned char *)alphaBuffer->Buffer)[y*alphaBuffer->ImagePitch + x * 3 + 0];
-
-				((unsigned char *)Buffer)[y*ImagePitch + x * 4 + 0] = b;
-				((unsigned char *)Buffer)[y*ImagePitch + x * 4 + 1] = g;
-				((unsigned char *)Buffer)[y*ImagePitch + x * 4 + 2] = r;
-				((unsigned char *)Buffer)[y*ImagePitch + x * 4 + 3] = a;
-			}
-		}
-	}
-	else
-	{
-		Tier0_Warning("CAfxStreams::View_Render: Combining streams failed.\n");
-	}
-
-	return ok;
-}
-
 // CAfxStreams::CEntityBvhCapture //////////////////////////////////////////////
 
 CAfxStreams::CEntityBvhCapture::CEntityBvhCapture(int entityIndex, Origin_e origin, Angles_e angles)
@@ -8505,4 +8273,239 @@ void CAfxStreams::ShutDown(void)
 		delete m_MatPostProcessEnableRef;
 		delete m_HostFrameRate;
 	}
+}
+
+// CAfxRecordingSettings ///////////////////////////////////////////////////////
+
+CAfxRecordingSettings::CShared CAfxRecordingSettings::m_Shared;
+
+CAfxClassicRecordingSettings::CShared::CShared()
+{
+	m_ClassicSettings = new CAfxClassicRecordingSettings();
+	m_ClassicSettings->AddRef();
+	m_NamedSettings.emplace(m_ClassicSettings->GetName(), m_ClassicSettings);
+
+	{
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpeg", true, "-c:v libx264 -preset slow -crf 22 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		m_NamedSettings.emplace(settings->GetName(), settings);
+	}
+
+	{
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegYuv420p", true, "-c:v libx264 -pix_fmt yuv420p -preset slow -crf 22 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		m_NamedSettings.emplace(settings->GetName(), settings);
+	}
+
+	{
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegLosslessFast", true, "-c:v libx264rgb -preset ultrafast -crf 0 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		m_NamedSettings.emplace(settings->GetName(), settings);
+	}
+
+	{
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegLosslessBest", true, "-c:v libx264rgb -preset veryslow -crf 0 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		m_NamedSettings.emplace(settings->GetName(), settings);
+	}
+}
+
+CAfxClassicRecordingSettings::CShared::~CShared()
+{
+	m_NamedSettings.clear();
+	m_ClassicSettings->Release();
+}
+
+void CAfxRecordingSettings::Console(IWrpCommandArgs * args)
+{
+	int argC = args->ArgC();
+	const char * arg0 = args->ArgV(0);
+
+	if (2 <= argC)
+	{
+		const char * arg1 = args->ArgV(1);
+
+		if (0 == _stricmp("print", arg1))
+		{
+			for (auto it = m_Shared.m_NamedSettings.begin(); it != m_Shared.m_NamedSettings.end(); ++it)
+			{
+				Tier0_Msg("%s%s\n", it->second.Settings->GetName(), it->second.Settings->GetProtected() ? " (protected)" : "");
+			}
+			return;
+		}
+		else if (0 == _stricmp("edit", arg1) && 3 <= argC)
+		{
+			const char * arg2 = args->ArgV(2);
+
+			if (CAfxRecordingSettings * setting = CAfxRecordingSettings::GetByName(arg2))
+			{
+				CSubWrpCommandArgs subArgs(args, 3);
+				setting->Console_Edit(&subArgs);
+			}
+			else
+			{
+				Tier0_Warning("AFXERROR: There is no recording setting named %s.\n", arg2);
+			}
+			return;
+		}
+		else if (0 == _stricmp("remove", arg1) && 3 <= argC)
+		{
+			const char * arg2 = args->ArgV(2);
+
+			auto it = m_Shared.m_NamedSettings.find(arg2);
+
+			if (it != m_Shared.m_NamedSettings.end())
+			{
+				if (it->second.Settings->GetProtected())
+				{
+					Tier0_Warning("AFXERROR: Setting %s is protected and thus can not be deleted.\n", arg2);
+				}
+				else if (!m_Shared.DeleteIfUnrefrenced(it))
+				{
+					Tier0_Warning("AFXERROR: Could not delete %s, because it has further refrences.\n", arg2);
+				}
+			}
+			else
+			{
+				Tier0_Warning("AFXERROR: There is no recording setting named %s.\n", arg2);
+			}
+			return;
+		}
+		else if (0 == _strcmpi("add", arg1))
+		{
+			if (5 == argC && 0 == _stricmp("ffmpeg", args->ArgV(2)))
+			{
+				const char * arg3 = args->ArgV(3);
+
+				if (StringIBeginsWith(arg3, "afx"))
+				{
+					Tier0_Warning("AFXERROR: Custom presets must not begin with \"afx\".\n");
+				}
+				else if (nullptr != GetByName(arg3))
+				{
+					Tier0_Warning("AFXERROR: There is already a setting named %s\n", arg3);
+				}
+				else
+				{
+					CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings(arg3, false, args->ArgV(4));
+					m_Shared.m_NamedSettings.emplace(settings->GetName(), settings);
+				}
+				return;
+			}
+
+			Tier0_Msg(
+				"%s add ffmpeg <name> \"<yourOptionsHere>\" - Adds an FFMPEG setting, <yourOptionsHere> are output options, use {QUOTE} for \", {AFX_STREAM_PATH} for the folder path of the stream, \\{ for {, \\} for }. For an example see one of the afxFfmpeg* templates (edit them).\n"
+				, arg0
+			);
+			return;
+		}
+	}
+
+	Tier0_Msg(
+		"%s print - List currently registerred settings\n"
+		"%s edit <name> - Remove setting.\n"
+		"%s remove <name> - Remove setting.\n"
+		"%s add [...] - Add a setting.\n"
+		, arg0
+		, arg0
+		, arg0
+		, arg0
+	);
+}
+
+// CAfxClassicRecordingSettings ////////////////////////////////////////////////
+
+void CAfxClassicRecordingSettings::Console_Edit(IWrpCommandArgs * args)
+{
+	Tier0_Msg("%s (type classic) recording setting options:\n", m_Name.c_str());
+	Tier0_Warning("The classic settings are controlled through mirv_streams settings and can not be edited.\n");
+}
+
+CAfxOutVideoStream * CAfxClassicRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat) const
+{
+	std::wstring wideStreamName;
+	if (UTF8StringToWideString(stream.StreamName_get(), wideStreamName))
+	{
+		std::wstring capturePath(streams.GetTakeDir());
+		capturePath.append(L"\\");
+		capturePath.append(wideStreamName);
+
+		CAfxRenderViewStream::StreamCaptureType captureType = stream.GetCaptureType();
+
+		return new CAfxOutImageStream(imageFormat, capturePath, (captureType == CAfxRenderViewStream::SCT_Depth24ZIP || captureType == CAfxRenderViewStream::SCT_DepthFZIP), streams.m_FormatBmpAndNotTga);
+	}
+	else
+	{
+		Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", stream.StreamName_get());
+	}
+
+	return nullptr;
+}
+
+// CAfxFfmpegRecordingSettings ////////////////////////////////////////////////
+
+void CAfxFfmpegRecordingSettings::Console_Edit(IWrpCommandArgs * args)
+{
+	Tier0_Msg("%s (type ffmpeg) recording setting options:\n", m_Name.c_str());
+
+	int argC = args->ArgC();
+	const char * arg0 = args->ArgV(0);
+
+	if (2 <= argC)
+	{
+		const char * arg1 = args->ArgV(1);
+
+		if (0 == _stricmp("options", arg1))
+		{
+			if (3 == argC)
+			{
+				if (m_Protected)
+				{
+					Tier0_Warning("This setting is protected and can not be changed.\n");
+					return;
+				}
+
+				m_FfmpegOptions = args->ArgV(2);
+				return;
+			}
+
+			Tier0_Msg(
+				"%s \"<yourOptionsHere>\" - Set output options, use {QUOTE} for \", {AFX_STREAM_PATH} for the folder path of the stream, \\{ for {, \\} for }.\n"
+				"Current value: \"%s\"\n"
+				, arg0
+				, m_FfmpegOptions.c_str()
+			);
+			return;
+		}
+	}
+
+	Tier0_Msg(
+		"%s options [...] - FFMPEG options.\n"
+		, arg0
+	);
+}
+
+CAfxOutVideoStream * CAfxFfmpegRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat) const
+{
+	std::wstring wideOptions;
+	if (UTF8StringToWideString(m_FfmpegOptions.c_str(), wideOptions))
+	{
+		std::wstring wideStreamName;
+		if (UTF8StringToWideString(stream.StreamName_get(), wideStreamName))
+		{
+			std::wstring capturePath(streams.GetTakeDir());
+			capturePath.append(L"\\");
+			capturePath.append(wideStreamName);
+
+			CAfxRenderViewStream::StreamCaptureType captureType = stream.GetCaptureType();
+
+			return new CAfxOutFFMPEGVideoStream(imageFormat, capturePath, wideOptions, g_AfxStreams.GetStartHostFrameRate());
+		}
+		else
+		{
+			Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", stream.StreamName_get());
+		}
+	}
+	else
+	{
+		Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", m_FfmpegOptions.c_str());
+	}
+
+	return nullptr;
 }

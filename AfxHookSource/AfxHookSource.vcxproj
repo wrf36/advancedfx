@@ -190,8 +190,12 @@
     <ClCompile Include="addresses.cpp" />
     <ClCompile Include="AfxClasses.cpp" />
     <ClCompile Include="AfxHookSourceInput.cpp" />
+    <ClCompile Include="AfxImageBuffer.cpp" />
+    <ClCompile Include="AfxOutStreams.cpp" />
     <ClCompile Include="AfxShaders.cpp" />
     <ClCompile Include="AfxStreams.cpp" />
+    <ClCompile Include="AfxThreadedRefCounted.cpp" />
+    <ClCompile Include="AfxWriteFileLimiter.cpp" />
     <ClCompile Include="aiming.cpp" />
     <ClCompile Include="CamIO.cpp" />
     <ClCompile Include="CampathDrawer.cpp" />
@@ -209,6 +213,7 @@
     <ClCompile Include="csgo_CSkyBoxView.cpp" />
     <ClCompile Include="csgo_CViewRender.cpp" />
     <ClCompile Include="csgo_c_baseanimatingoverlay.cpp" />
+    <ClCompile Include="csgo_GameEvents.cpp" />
     <ClCompile Include="csgo_SndMixTimeScalePatch.cpp" />
     <ClCompile Include="csgo_Stdshader_dx9_Hooks.cpp" />
     <ClCompile Include="csgo_S_StartSound.cpp" />
@@ -304,9 +309,13 @@
     <ClInclude Include="addresses.h" />
     <ClInclude Include="AfxClasses.h" />
     <ClInclude Include="AfxHookSourceInput.h" />
+    <ClInclude Include="AfxImageBuffer.h" />
     <ClInclude Include="AfxInterfaces.h" />
+    <ClInclude Include="AfxOutStreams.h" />
     <ClInclude Include="AfxShaders.h" />
     <ClInclude Include="AfxStreams.h" />
+    <ClInclude Include="AfxThreadedRefCounted.h" />
+    <ClInclude Include="AfxWriteFileLimiter.h" />
     <ClInclude Include="aiming.h" />
     <ClInclude Include="CamIO.h" />
     <ClInclude Include="CampathDrawer.h" />
@@ -324,6 +333,7 @@
     <ClInclude Include="csgo_CSkyBoxView.h" />
     <ClInclude Include="csgo_CViewRender.h" />
     <ClInclude Include="csgo_c_baseanimatingoverlay.h" />
+    <ClInclude Include="csgo_GameEvents.h" />
     <ClInclude Include="csgo_SndMixTimeScalePatch.h" />
     <ClInclude Include="csgo_Stdshader_dx9_Hooks.h" />
     <ClInclude Include="csgo_S_StartSound.h" />
