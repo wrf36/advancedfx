@@ -49,6 +49,7 @@ class CAfxStreams;
 
 extern CAfxStreams g_AfxStreams;
 
+class IAfxBasefxStreamModifier;
 
 class IAfxStreamContext abstract
 {
@@ -406,12 +407,12 @@ public:
 	{
 	}
 
-	void QueueCapture(IAfxMatRenderContextOrg * ctx, CAfxRecordStream * captureTarget, int x, int y, int width, int height);
+	void QueueCapture(IAfxMatRenderContextOrg * ctx, CAfxRecordStream * captureTarget, size_t streamIndex, int x, int y, int width, int height);
 
 	//
 	// State information:
 
-	virtual void OnRenderBegin(const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky)
+	virtual void OnRenderBegin(IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky)
 	{
 		m_EngineThreadStream = this;
 	}
@@ -433,13 +434,14 @@ private:
 		public CAfxFunctor
 	{
 	public:
-		CCaptureFunctor(CAfxRenderViewStream & stream, CAfxRecordStream * captureTarget, int x, int y, int width, int height);
+		CCaptureFunctor(CAfxRenderViewStream & stream, CAfxRecordStream * captureTarget, size_t streamIndex, int x, int y, int width, int height);
 
 		void operator()();
 
 	private:
 		CAfxRenderViewStream & m_Stream;
 		CAfxRecordStream * m_CaptureTarget;
+		size_t m_StreamIndex;
 		int m_X;
 		int m_Y;
 		int m_Width;
@@ -453,7 +455,7 @@ private:
 	std::string m_AttachCommands;
 	std::string m_DetachCommands;
 
-	void Capture(CAfxRecordStream * captureTarget, int x, int y, int width, int height);
+	void Capture(CAfxRecordStream * captureTarget, size_t streamIndex, int x, int y, int width, int height);
 };
 
 class CAfxSingleStream;
@@ -462,9 +464,9 @@ class CAfxTwinStream;
 class CAfxRecordingSettings : public CAfxThreadedRefCounted
 {
 public:
-	static CAfxRecordingSettings * GetClassic()
+	static CAfxRecordingSettings * GetDefault()
 	{
-		return m_Shared.m_ClassicSettings;
+		return m_Shared.m_DefaultSettings;
 	}
 
 	static CAfxRecordingSettings * GetByName(const char * name)
@@ -531,7 +533,7 @@ protected:
 
 	static struct CShared {
 		std::map<std::string, CNamedSettingValue> m_NamedSettings;
-		CAfxRecordingSettings * m_ClassicSettings;
+		CAfxRecordingSettings * m_DefaultSettings;
 
 		CShared();
 		~CShared();
@@ -559,6 +561,39 @@ protected:
 			return true;
 		}
 	} m_Shared;
+};
+
+class CAfxDefaultRecordingSettings : public CAfxRecordingSettings
+{
+public:
+	CAfxDefaultRecordingSettings(CAfxRecordingSettings * useSettings)
+		: CAfxRecordingSettings("afxDefault", true)
+		, m_DefaultSettings(useSettings)
+	{
+		if (m_DefaultSettings) m_DefaultSettings->AddRef();
+	}
+
+	virtual void Console_Edit(IWrpCommandArgs * args) override;
+
+	virtual CAfxOutVideoStream * CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat) const override
+	{
+		if (m_DefaultSettings)
+			return m_DefaultSettings->CreateOutVideoStream(streams, stream, imageFormat);
+
+		return nullptr;
+	}
+
+protected:
+	virtual ~CAfxDefaultRecordingSettings()
+	{
+		if (m_DefaultSettings)
+		{
+			m_DefaultSettings->Release();
+			m_DefaultSettings = nullptr;
+		}
+	}
+private:
+	CAfxRecordingSettings * m_DefaultSettings;
 };
 
 class CAfxClassicRecordingSettings : public CAfxRecordingSettings
@@ -596,12 +631,13 @@ class CAfxRecordStream abstract
 : public CAfxStream
 {
 public:
-	CAfxRecordStream(char const * streamName);
+	CAfxRecordStream(char const * streamName, std::vector<CAfxRenderViewStream *>&& streams);
 
 	virtual CAfxRecordStream * AsAfxRecordStream(void) { return this; }
 
-	virtual CAfxSingleStream * AsAfxSingleStream(void) { return 0; }
-	virtual CAfxTwinStream * AsAfxTwinStream(void) { return 0; }
+	virtual IAfxBasefxStreamModifier * GetBasefxStreamModifier(size_t streamIndex) const {
+		return nullptr;
+	}
 
 	CAfxRecordingSettings * GetSettings() const
 	{
@@ -632,23 +668,74 @@ public:
 	void QueueCaptureEnd(IAfxMatRenderContextOrg * ctx);
 
 	/// <remarks>This is not guaranteed to be called, i.e. not called upon buffer re-allocation error.</remarks>
-	virtual void OnImageBufferCaptured(CAfxRenderViewStream * stream, CAfxImageBuffer * buffer) = 0;
+	void OnImageBufferCaptured(size_t index, CAfxImageBuffer * buffer);
 
 	virtual CAfxRenderViewStream::StreamCaptureType GetCaptureType() const = 0;
 
+	size_t GetStreamCount() const {
+		return m_Streams.size();
+	}
+
+	CAfxRenderViewStream * GetStream(size_t index) const
+	{
+		if (index < 0 || index > m_Streams.size()) return nullptr;
+		
+		return m_Streams[index];
+	}
+
+	void LevelShutdown(void)
+	{
+		for (size_t i = 0; i < m_Streams.size(); ++i)
+		{
+			m_Streams[i]->LevelShutdown();
+		}
+	}
+
+	virtual bool Console_Edit_Head(IWrpCommandArgs * args);
+	virtual void Console_Edit_Tail(IWrpCommandArgs * args);
+
 protected:
+	std::vector<CAfxRenderViewStream *> m_Streams;
+
+	std::vector<CAfxImageBuffer *> m_Buffers;
+
 	CAfxRecordingSettings * m_Settings;
 	CAfxOutVideoStream * m_OutVideoStream;
 
 	virtual ~CAfxRecordStream() override
 	{
+		for (size_t i = 0; i < m_Streams.size(); ++i)
+		{
+			if (CAfxImageBuffer * buffer = m_Buffers[i])
+			{
+				buffer->Release();
+			}
+		}
+
+		for (size_t i = 0; i < m_Streams.size(); ++i)
+		{
+			m_Streams[i]->Release();
+		}
+
 		m_Settings->Release();
 	}
 
-	virtual void CaptureStart(void) = 0;
+	virtual void CaptureStart(void)
+	{
 
-	/// <param name="outPath">Can be 0 in case the path could not be created successfully.</param>
-	virtual void CaptureEnd() = 0;
+	}
+
+	virtual void CaptureEnd()
+	{
+		for (size_t i = 0; i < m_Buffers.size(); ++i)
+		{
+			if (CAfxImageBuffer *& buffer = m_Buffers[i])
+			{
+				buffer->Release();
+				buffer = nullptr;
+			}
+		}
+	}
 
 private:
 	class CCaptureStartFunctor
@@ -701,30 +788,16 @@ class CAfxSingleStream
 public:
 	CAfxSingleStream(char const * streamName, CAfxRenderViewStream * stream);
 
-	virtual CAfxSingleStream * AsAfxSingleStream(void) { return this; }
-
-	virtual void LevelShutdown(void);
-
-	CAfxRenderViewStream * Stream_get(void);
-
-	virtual void OnImageBufferCaptured(CAfxRenderViewStream * stream, CAfxImageBuffer * buffer);
-
 	virtual CAfxRenderViewStream::StreamCaptureType GetCaptureType() const override;
 
+	virtual bool Console_Edit_Head(IWrpCommandArgs * args) override;
+	virtual void Console_Edit_Tail(IWrpCommandArgs * args) override;
+
 protected:
-	virtual ~CAfxSingleStream();
-
-	virtual void CaptureStart(void);
-
-	/// <param name="outPath">Can be 0 in case the path could not be created successfully.</param>
-	virtual void CaptureEnd();
+	virtual void CaptureEnd() override;
 
 private:
-	CAfxRenderViewStream * m_Stream;
-	CAfxImageBuffer * m_Buffer;
-	std::mutex m_CaptureMutex;
-	std::condition_variable m_CaptureCondition;
-	bool m_Capturing = false;
+
 };
 
 class CAfxTwinStream
@@ -741,38 +814,19 @@ public:
 	/// <remarks>Takes ownership of given streams.</remarks>
 	CAfxTwinStream(char const * streamName, CAfxRenderViewStream * streamA, CAfxRenderViewStream * streamB, StreamCombineType streamCombineType);
 
-	virtual CAfxTwinStream * AsAfxTwinStream(void) { return this; }
-
-	virtual void LevelShutdown(void);
-
-	CAfxRenderViewStream * StreamA_get();
-	CAfxRenderViewStream * StreamB_get();
-
 	StreamCombineType StreamCombineType_get(void);
 	void StreamCombineType_set(StreamCombineType value);
 
-	virtual void OnImageBufferCaptured(CAfxRenderViewStream * stream, CAfxImageBuffer * buffer);
-
 	virtual CAfxRenderViewStream::StreamCaptureType GetCaptureType() const override;
 
+	virtual bool Console_Edit_Head(IWrpCommandArgs * args) override;
+	virtual void Console_Edit_Tail(IWrpCommandArgs * args) override;
+
 protected:
-	virtual ~CAfxTwinStream();
-
-	virtual void CaptureStart(void);
-
-	/// <param name="outPath">Can be 0 in case the path could not be created successfully.</param>
-	virtual void CaptureEnd();
+	virtual void CaptureEnd() override;
 
 private:
-	CAfxRenderViewStream * m_StreamA;
-	CAfxRenderViewStream * m_StreamB;
 	StreamCombineType m_StreamCombineType;
-
-	CAfxImageBuffer * m_BufferA;
-	CAfxImageBuffer * m_BufferB;
-	std::mutex m_CaptureMutex;
-	std::condition_variable m_CaptureCondition;
-	bool m_Capturing = false;
 };
 
 
@@ -950,7 +1004,7 @@ public:
 
 	static void MainThreadInitialize(void);
 
-	virtual void OnRenderBegin(const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky) override;
+	virtual void OnRenderBegin(IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky) override;
 
 	virtual void OnRenderEnd(void) override;
 
@@ -1028,6 +1082,17 @@ public:
 	CAction * OtherSpecialAction_get(void);
 
 	CAction * VguiAction_get(void);
+	void VguiAction_set(CAction *);
+
+	bool GetClearBeforeRender(void) const
+	{
+		return m_ClearBeforeRender;
+	}
+
+	void SetClearBeforeRender(bool value)
+	{
+		m_ClearBeforeRender = value;
+	}
 
 	enum EClearBeforeHud
 	{
@@ -1069,7 +1134,9 @@ public:
 	{
 		EDrawDepthMode_Inverse,
 		EDrawDepthMode_Linear,
-		EDrawDepthMode_LogE
+		EDrawDepthMode_LogE,
+		EDrawDepthMode_PyramidalLinear,
+		EDrawDepthMode_PyramidalLogE
 	};
 
 	EDrawDepthMode DrawDepthMode_get()
@@ -1134,6 +1201,8 @@ protected:
 
 		CAction * DrawAction_get(void);
 		CAction * NoDrawAction_get(void);
+		CAction * DrawMatteAction_get(void);
+		CAction * NoDrawMatteAction_get(void);
 		CAction * DepthAction_get(void);
 		//CAction * Depth24Action_get(void);
 		CAction * MaskAction_get(void);
@@ -1149,6 +1218,8 @@ protected:
 		int m_ShutDownLevel = 0;
 		std::map<CActionKey, CAction *> m_Actions;
 		CAction * m_DrawAction = 0;
+		CAction * m_DrawMatteAction = 0;
+		CAction * m_NoDrawMatteAction = 0;
 		CAction * m_NoDrawAction = 0;
 		CAction * m_DepthAction = 0;
 		//CAction * m_Depth24Action = 0;
@@ -1319,6 +1390,20 @@ private:
 			return;
 		}
 */
+	};
+
+	class CActionZOnly
+		: public CAction
+	{
+	public:
+		CActionZOnly()
+			: CAction()
+		{
+		}
+
+		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch);
+
+		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, CAfxTrackedMaterial * trackedMaterial);
 	};
 
 	class CActionDraw
@@ -1791,9 +1876,14 @@ private:
 			return m_DrawingSkyBoxView;
 		}
 
-		void RenderBegin(CAfxBaseFxStream * stream, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky);
+		void RenderBegin(CAfxBaseFxStream * stream, IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky);
 
 		void RenderEnd(void);
+
+		IAfxBasefxStreamModifier * GetModifier() const
+		{
+			return m_Modifier;
+		}
 
 		//
 		// IAfxStreamContext:
@@ -1965,6 +2055,7 @@ private:
 		SOURCESDK::VMatrix m_ProjectionMatrix;
 		SOURCESDK::VMatrix m_ProjectionMatrixSky;
 		bool m_IsNextDepth;
+		IAfxBasefxStreamModifier * m_Modifier;
 
 		void QueueBegin();
 		void QueueEnd();
@@ -2140,6 +2231,8 @@ private:
 	bool m_PickerCollecting;
 	std::shared_timed_mutex m_PickerMutex;
 
+	bool m_ClearBeforeRender = false;
+
 	CAction * CAfxBaseFxStream::GetAction(CAfxTrackedMaterial * trackedMaterial);
 	CAction * CAfxBaseFxStream::GetAction(CAfxTrackedMaterial * trackedMaterial, CAction * action);
 
@@ -2148,6 +2241,50 @@ private:
 	*/
 
 	bool Picker_GetHidden(SOURCESDK::CSGO::CBaseHandle const & entityHandle, CAfxTrackedMaterial * material);
+};
+
+class __declspec(novtable) IAfxBasefxStreamModifier abstract
+{
+public:
+	virtual void OverrideClearColor(unsigned char & outR, unsigned char & outG, unsigned char & outB, unsigned char & outA) = 0;
+	virtual CAfxBaseFxStream::CAction * OverrideAction(CAfxBaseFxStream::CAction * action) = 0;
+};
+
+class CAfxMatteStream
+	: public CAfxRecordStream
+{
+public:
+	/// <remarks>Takes ownership of given streams.</remarks>
+	CAfxMatteStream(char const * streamName, CAfxRenderViewStream * stream);
+
+	virtual IAfxBasefxStreamModifier * GetBasefxStreamModifier(size_t streamIndex) const override
+	{
+		if (streamIndex >= m_Modifiers.size()) return nullptr;
+
+		return m_Modifiers[streamIndex];
+	}
+
+	virtual CAfxRenderViewStream::StreamCaptureType GetCaptureType() const override;
+
+	virtual bool Console_Edit_Head(IWrpCommandArgs * args) override;
+	virtual void Console_Edit_Tail(IWrpCommandArgs * args) override;
+
+	void OverrideClearColor(size_t streamIndex, unsigned char & outR, unsigned char & outG, unsigned char & outB, unsigned char & outA);
+	CAfxBaseFxStream::CAction * OverrideAction(size_t streamIndex, CAfxBaseFxStream::CAction * action);
+
+protected:
+	virtual ~CAfxMatteStream();
+
+	virtual void CaptureEnd() override;
+
+private:
+	std::vector<IAfxBasefxStreamModifier *> m_Modifiers;
+	std::set<CAfxBaseFxStream::CAction *> m_MatteActions;
+	std::set<CAfxBaseFxStream::CAction *> m_NoMatteActions;
+	CAfxBaseFxStream::CAction * m_ActionBlack;
+	CAfxBaseFxStream::CAction * m_ActionWhite;
+	CAfxBaseFxStream::CAction * m_ActionNoDraw;
+	bool m_HandleMaskAction;
 };
 
 class CAfxDepthStream
@@ -2302,12 +2439,50 @@ public:
 
 		DrawHud_set(DT_NoDraw);
 
-		this->SmokeOverlayAlphaFactor_set(0.01f);
+		this->SmokeOverlayAlphaFactor_set(0.0f);
 		Console_ActionFilter_Add("effects/overlaysmoke", m_Shared.NoDrawAction_get());
 	}
 
 protected:
 	virtual ~CAfxMatteEntityStream() {}
+};
+
+class CAfxMatteFxStream
+	: public CAfxBaseFxStream
+{
+public:
+	CAfxMatteFxStream() : CAfxBaseFxStream()
+	{
+		ForceBuildingCubemaps_set(true);
+
+		SetAction(m_PlayerModelsAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_WeaponModelsAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_StatTrakAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_ShellModelsAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_ShellParticleAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_StickerAction, m_Shared.DrawMatteAction_get());
+
+		// Temporary workaround:
+		SetAction(m_WriteZAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_DevAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_OtherEngineAction, m_Shared.DrawMatteAction_get());
+		SetAction(m_OtherSpecialAction, m_Shared.DrawMatteAction_get());
+
+		DrawHud_set(DT_NoDraw);
+
+		SetAction(m_ClientEffectTexturesAction, m_Shared.NoDrawMatteAction_get());
+		SetAction(m_CableAction, m_Shared.NoDrawMatteAction_get());
+		SetAction(m_DecalTexturesAction, m_Shared.NoDrawMatteAction_get());
+		SetAction(m_EffectsAction, m_Shared.NoDrawMatteAction_get());
+		SetAction(m_OtherParticleAction, m_Shared.NoDrawMatteAction_get());
+		SetAction(m_OtherAction, m_Shared.NoDrawMatteAction_get());
+
+		this->SmokeOverlayAlphaFactor_set(0.0f);
+		Console_ActionFilter_Add("effects/overlaysmoke", m_Shared.NoDrawMatteAction_get());
+	}
+
+protected:
+	virtual ~CAfxMatteFxStream() {}
 };
 
 class CAfxDepthEntityStream
@@ -2352,7 +2527,7 @@ public:
 
 		DrawHud_set(DT_NoDraw);
 
-		this->SmokeOverlayAlphaFactor_set(0.01f);
+		this->SmokeOverlayAlphaFactor_set(0.0f);
 		Console_ActionFilter_Add("effects/overlaysmoke", m_Shared.NoDrawAction_get());
 	}
 
@@ -2596,6 +2771,7 @@ public:
 	void Console_AddAlphaEntityStream(const char * streamName);
 	void Console_AddAlphaWorldStream(const char * streamName);
 	void Console_AddAlphaMatteEntityStream(const char * streamName);
+	void Console_AddMatteStream(const char * streamName);
 	void Console_AddHudStream(const char * streamName);
 	void Console_AddHudWhiteStream(const char * streamName);
 	void Console_AddHudBlackStream(const char * streamName);
@@ -2603,8 +2779,12 @@ public:
 	void Console_MoveStream(IWrpCommandArgs * args);
 	void Console_RemoveStream(const char * streamName);
 	void Console_EditStream(const char * streamName, IWrpCommandArgs * args);
+	void Console_EditStream(CAfxStream * stream, IWrpCommandArgs * args);
+	bool Console_EditStream(CAfxRenderViewStream * stream, IWrpCommandArgs * args);
 	void Console_ListActions(void);
 	void Console_Bvh(IWrpCommandArgs * args);
+	bool Console_ToStreamCombineType(char const * value, CAfxTwinStream::StreamCombineType & streamCombineType);
+	char const * Console_FromStreamCombineType(CAfxTwinStream::StreamCombineType streamCombineType);
 
 	bool CamExport_get(void) { return m_CamExport;  }
 	void CamExport_set(bool value) { m_CamExport = value;  }
@@ -2761,14 +2941,7 @@ private:
 
 	void OnAfxBaseClientDll_Free(void);
 
-	void Console_EditStream(CAfxStream * stream, IWrpCommandArgs * args);
-
-	bool Console_EditStream(CAfxRenderViewStream * stream, IWrpCommandArgs * args);
-
 	bool Console_CheckStreamName(char const * value);
-
-	bool Console_ToStreamCombineType(char const * value, CAfxTwinStream::StreamCombineType & streamCombineType);
-	char const * Console_FromStreamCombineType(CAfxTwinStream::StreamCombineType streamCombineType);
 
 	bool Console_ToStreamCaptureType(char const * value, CAfxRenderViewStream::StreamCaptureType & StreamCaptureType);
 	char const * Console_FromStreamCaptureType(CAfxRenderViewStream::StreamCaptureType StreamCaptureType);
@@ -2785,7 +2958,7 @@ private:
 	void CreateRenderTargets(SOURCESDK::IMaterialSystem_csgo * materialSystem);
 
 	IAfxMatRenderContextOrg * CaptureStream(IAfxMatRenderContextOrg * ctxp, CAfxRecordStream * stream, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
-	IAfxMatRenderContextOrg * CaptureStreamToBuffer(IAfxMatRenderContextOrg * ctxp, CAfxRenderViewStream * stream, CAfxRecordStream * captureTarget, bool first, bool last, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
+	IAfxMatRenderContextOrg * CaptureStreamToBuffer(IAfxMatRenderContextOrg * ctxp, size_t streamIndex, CAfxRenderViewStream * stream, CAfxRecordStream * captureTarget, bool first, bool last, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
 
 	IAfxMatRenderContextOrg * PreviewStream(IAfxMatRenderContextOrg * ctxp, CAfxRenderViewStream * previewStream, bool isLast, int slot, int cols, bool & hudDrawn, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
 
