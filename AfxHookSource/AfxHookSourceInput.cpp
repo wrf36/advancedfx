@@ -59,6 +59,8 @@ AfxHookSourceInput::AfxHookSourceInput()
 , m_MouseBackwardSpeed(320.0)
 , m_MouseLeftSpeed(320.0)
 , m_MouseRightSpeed(320.0)
+, m_MouseFovPositiveSpeed(45.0)
+, m_MouseFovNegativeSpeed(45.0)
 , m_MLDown(false)
 , m_MRDown(false)
 {
@@ -484,6 +486,16 @@ bool  AfxHookSourceInput::Supply_MouseEvent(DWORD uMsg, WPARAM & wParam, LPARAM 
 				wParam &= ~(WPARAM)MK_RBUTTON;
 			}
 			break;
+		case WM_MOUSEWHEEL:
+			{
+				m_MouseFov = true;
+
+				signed short delta = GET_WHEEL_DELTA_WPARAM(wParam);
+
+				if(0 <= delta) m_CamFovI += m_MouseSens * m_MouseFovNegativeSpeed * delta;
+				else m_CamFov += m_MouseSens * m_MouseFovPositiveSpeed * -delta;
+			}
+			return true;
 		}
 	}
 
@@ -613,6 +625,13 @@ void AfxHookSourceInput::Supply_MouseFrameEnd(void)
 				m_CamUpI = 0.0;
 			}
 		}
+
+		if (m_MouseFov)
+		{
+			m_MouseFov = false;
+			m_CamFov = 0.0;
+			m_CamFovI = 0.0;
+		}
 	}
 }
 
@@ -627,4 +646,49 @@ bool AfxHookSourceInput::GetConsoleOpen(void)
 		g_VEngineClient
 		&& g_VEngineClient->Con_IsVisible()
 	;
+}
+
+bool AfxHookSourceInput::Override(float & Tx, float &Ty, float & Tz, float & Rx, float & Ry, float & Rz, float & Fov)
+{
+	bool overriden = false;
+
+	if (m_SetTx)
+	{
+		m_SetTx = false;
+		Tx = m_SetTxValue;
+	}
+	if (m_SetTy)
+	{
+		m_SetTy = false;
+		Ty = m_SetTyValue;
+	}
+	if (m_SetTz)
+	{
+		m_SetTz = false;
+		Tz = m_SetTzValue;
+	}
+
+	if (m_SetRx)
+	{
+		m_SetRx = false;
+		Rx = m_SetRxValue;
+	}
+	if (m_SetRy)
+	{
+		m_SetRy = false;
+		Ry = m_SetRyValue;
+	}
+	if (m_SetRz)
+	{
+		m_SetRz = false;
+		Rz = m_SetRzValue;
+	}
+
+	if (m_SetFov)
+	{
+		m_SetFov = false;
+		Fov = m_SetFovValue;
+	}
+
+	return overriden;
 }

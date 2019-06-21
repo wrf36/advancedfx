@@ -21,6 +21,8 @@ public:
 
 	AfxHookSourceInput();
 
+	bool Override(float & Tx, float &Ty, float & Tz, float & Rx, float & Ry, float & Rz, float & Fov);
+
 	bool GetCamResetView(void);
 	double GetCamDForward(void);
 	double GetCamDLeft(void);
@@ -116,6 +118,48 @@ public:
 	OffsetMode GetOffsetMode() { return m_OffsetMode; }
 	void SetOffsetMode(OffsetMode value) { m_OffsetMode = value; }
 
+	void SetTx(float value)
+	{
+		m_SetTx = true;
+		m_SetTxValue = value;
+	}
+
+	void SetTy(float value)
+	{
+		m_SetTy = true;
+		m_SetTyValue = value;
+	}
+
+	void SetTz(float value)
+	{
+		m_SetTz = true;
+		m_SetTzValue = value;
+	}
+
+	void SetRx(float value)
+	{
+		m_SetRx = true;
+		m_SetRxValue = value;
+	}
+
+	void SetRy(float value)
+	{
+		m_SetRy = true;
+		m_SetRyValue = value;
+	}
+
+	void SetRz(float value)
+	{
+		m_SetRz = true;
+		m_SetRzValue = value;
+	}
+
+	void SetFov(float value)
+	{
+		m_SetFov = true;
+		m_SetFovValue = value;
+	}
+
 private:
 	static const double m_CamSpeedFacMove;
 	static const double m_CamSpeedFacRotate;
@@ -147,6 +191,8 @@ private:
 	double m_MouseBackwardSpeed;
 	double m_MouseLeftSpeed;
 	double m_MouseRightSpeed;
+	double m_MouseFovPositiveSpeed;
+	double m_MouseFovNegativeSpeed;
 
 	bool m_CamResetView;
 	double m_CamForward;
@@ -171,12 +217,29 @@ private:
 	bool m_MLWasDown = false;
 	bool m_MRDown;
 	bool m_MRWasDown = false;
+	bool m_MouseFov = true;
 	bool m_CameraControlMode;
 	bool m_Focus;
 	bool m_IgnoreKeyUp;
 	bool m_IgnoreNextKey;
 	LONG m_LastCursorX;
 	LONG m_LastCursorY;
+
+	bool m_SetTx = false;
+	bool m_SetTy = false;
+	bool m_SetTz = false;
+	bool m_SetRx = false;
+	bool m_SetRy = false;
+	bool m_SetRz = false;
+	bool m_SetFov = false;
+
+	float m_SetTxValue;
+	float m_SetTyValue;
+	float m_SetTzValue;
+	float m_SetRxValue;
+	float m_SetRyValue;
+	float m_SetRzValue;
+	float m_SetFovValue;
 
 	OffsetMode m_OffsetMode = OffsetMode_Last;
 
