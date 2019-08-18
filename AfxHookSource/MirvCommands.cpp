@@ -31,6 +31,7 @@
 #include "FovScaling.h"
 
 #include "csgo_Stdshader_dx9_Hooks.h"
+//#include <csgo/sdk_src/public/tier0/memalloc.h>
 
 #include <malloc.h>
 #include <stdlib.h>
@@ -993,6 +994,12 @@ CON_COMMAND(mirv_streams, "Access to streams system.")
 			CAfxRecordingSettings::Console(&subArgs);
 			return;
 		}
+		else if (0 == _stricmp("mainStream", cmd1))
+		{
+			CSubWrpCommandArgs subArgs(args, 2);
+			g_AfxStreams.Console_MainStream(&subArgs);
+			return;
+		}
 	}
 
 	Tier0_Msg(
@@ -1007,8 +1014,84 @@ CON_COMMAND(mirv_streams, "Access to streams system.")
 		"mirv_streams record [...] - Recording control.\n"
 		"mirv_streams actions [...] - Actions control (for baseFx based streams).\n"
 		"mirv_streams settings [...] - Recording settings.\n"
+		"mirv_streams mainStream [...] - Controls which stream is the main stream for caching full-scene state (default is first).\n"
 	);
 	return;
+}
+
+void ReplaceAll(std::string & str, const std::string & from, const std::string & to)
+{
+	if (from.empty())
+		return;
+	size_t start_pos = 0;
+	while ((start_pos = str.find(from, start_pos)) != std::wstring::npos) {
+		str.replace(start_pos, from.length(), to);
+		start_pos += to.length();
+	}
+}
+
+CON_COMMAND(mirv_exec, "command execution")
+{
+	SOURCESDK::CSGO::ICvar * pCvar = WrpConCommands::GetVEngineCvar_CSGO();
+	if (!pCvar)
+	{
+		Tier0_Warning("Error: No suitable Cvar interface found.\n");
+		return;
+	}
+
+	int argC = args->ArgC();
+	const char * arg0 = args->ArgV(0);
+
+	if (2 <= argC)
+	{
+		const char * arg1 = args->ArgV(1);
+
+		if (auto cmd = pCvar->FindCommand(arg1))
+		{
+			const char **ppargV = (const char **)malloc(sizeof(char *)*(argC - 1));
+
+			std::string * strings = new std::string[argC - 1];
+
+			for (int i = 1; i < argC; ++i)
+			{
+				std::string & str = strings[i - 1];
+
+				str = args->ArgV(i);
+
+				ReplaceAll(str, "{QUOTE}", "\"");
+				ReplaceAll(str, "{QUOTE2}", "{QUOTE}");
+				ReplaceAll(str, "{QUOTE3}", "{QUOTE2}");
+				ReplaceAll(str, "{QUOTE4}", "{QUOTE3}");
+				ReplaceAll(str, "{QUOTE5}", "{QUOTE4}");
+				ReplaceAll(str, "{QUOTE6}", "{QUOTE5}");
+				ReplaceAll(str, "{QUOTE7}", "{QUOTE6}");
+				ReplaceAll(str, "{QUOTE8}", "{QUOTE7}");
+				ReplaceAll(str, "{QUOTE9}", "{QUOTE8}");
+				ReplaceAll(str, "{QUOTE10}", "{QUOTE9}");
+				ReplaceAll(str, "\\{", "{");
+				ReplaceAll(str, "\\}", "}");
+
+				ppargV[i-1] = str.c_str();
+			}
+
+			SOURCESDK::CSGO::CCommand ccmd(argC - 1, ppargV);
+
+			cmd->Dispatch(ccmd);
+
+			free(ppargV);
+			return;
+		}
+		else
+		{
+			Tier0_Warning("AFXERROR: Command %s not found.\n", arg1);
+			return;
+		}
+	}
+
+	Tier0_Msg(
+		"%s <sCommandName> \"<arg1>\" ... \"<argN>\" - Pass arguments <arg1> to <argN> to command named <sCommandName>,  use {QUOTE} for \", \\{ for {, \\} for }.\n"
+		, arg0
+	);
 }
 
 CON_COMMAND(__mirv_exec, "client command execution: __mirv_exec <as you would have typed here>") {
@@ -3976,14 +4059,14 @@ void MirvVPanelOnCommand(SOURCESDK::CSGO::vgui::Panel * panel, char const * comm
 {
 	int * vtable = *(int**)panel;
 
-	void * onCommand = (void *)vtable[277];
+	void * onCommand = (void *)vtable[96];
 
 	__asm push command
 	__asm mov ecx, panel
 	__asm call onCommand
 }
 
-void MirvDoVPanelOnCommand(char const * panelName, char const * panelCommand)
+void MirvDoVPanelOnCommand(char const * panelName, char const * destinationModule, char const * panelCommand)
 {
 	if (!(g_pVGuiSurface_csgo && g_pVGuiPanel_csgo))
 	{
@@ -3995,7 +4078,7 @@ void MirvDoVPanelOnCommand(char const * panelName, char const * panelCommand)
 
 	if (MirvFindVPanel(g_pVGuiSurface_csgo->GetEmbeddedPanel(), panelName, &vpanel))
 	{
-		SOURCESDK::CSGO::vgui::Panel * panel = g_pVGuiPanel_csgo->GetPanel(vpanel, "ClientDLL");
+		SOURCESDK::CSGO::vgui::Panel * panel = g_pVGuiPanel_csgo->GetPanel(vpanel, destinationModule);
 		if (panel)
 			MirvVPanelOnCommand(panel, panelCommand);
 		else
@@ -4059,17 +4142,19 @@ CON_COMMAND(mirv_vpanel, "VGUI Panel access")
 		}
 		else if (!_stricmp("command", cmd1))
 		{
-			if (4 <= argc)
+			if (5 <= argc)
 			{
 				char const * panelName = args->ArgV(2);
-				char const * panelCommand = args->ArgV(2);
+				char const * panelModule = args->ArgV(3);
+				char const * panelCommand = args->ArgV(4);
 
-				MirvDoVPanelOnCommand(panelName, panelCommand);
+				MirvDoVPanelOnCommand(panelName, panelModule, panelCommand);
 				return;
 			}
 
 			Tier0_Msg(
-				"mirv_vpanel command <panelName> <comand>\n"
+				"mirv_vpanel command <panelName> <sModule> <comand> - Execute <command> on panel with name <panelName> in module <sModule> (options are case-sensitive, <sModule> can e.g. be BaseUI or ClientDLL).\n"
+				"Example: mirv_vpanel command DemoUIPanel BaseUI pause\n"
 			);
 			return;
 		}
@@ -4096,13 +4181,22 @@ CON_COMMAND(mirv_loadlibrary, "Load a DLL.")
 	{
 		char const * cmd1 = args->ArgV(1);
 
-		if (0 != LoadLibraryA(cmd1))
+		std::wstring wCmd1;
+		if (UTF8StringToWideString(cmd1, wCmd1))
 		{
-			Tier0_Msg("LoadLibraryA OK.\n");
+
+			if (0 != LoadLibraryW(wCmd1.c_str()))
+			{
+				Tier0_Msg("LoadLibraryA OK.\n");
+			}
+			else
+			{
+				Tier0_Warning("LoadLibraryA failed.\n");
+			}
 		}
 		else
 		{
-			Tier0_Warning("LoadLibraryA failed.\n");
+			Tier0_Warning("Failed to convert \"%s\" from UFT8 to UTF-16.\n", cmd1);
 		}
 
 		return;
@@ -4218,6 +4312,61 @@ CON_COMMAND(mirv_cfg, "general HLAE configuration")
 		"%s forceViewOverride [...] - If to force the view override onto the local player, can fix a few bugs (CS:GO only)."
 		"%s viewOverrideReset [...] - If to resert roll to 0 and fov to 90 (unscaled) after ending a view override (CS:GO only)."
 		, arg0
+		, arg0
+		, arg0
+	);
+}
+
+CON_COMMAND(mirv_guides, "Draw guides on screen (CS:GO).")
+{
+	int argC = args->ArgC();
+	const char * arg0 = args->ArgV(0);
+
+	if (3 <= argC)
+	{
+		const char * arg1 = args->ArgV(1);
+		const char * arg2 = args->ArgV(2);
+
+		if (0 == _stricmp("enabled", arg2))
+		{
+			if (0 == _stricmp("phiGrid", arg1))
+			{
+				if (4 <= argC)
+				{
+					g_AfxStreams.DrawPhiGrid = 0 != atoi(args->ArgV(3));
+					return;
+				}
+
+				Tier0_Msg(
+					"%s phiGrid enabled 0|1\n"
+					"Current value: %i\n"
+					, arg0
+					, g_AfxStreams.DrawPhiGrid ? 1 : 0
+				);
+				return;
+			}
+			else if (0 == _stricmp("ruleOfThirds", arg1))
+			{
+				if (4 <= argC)
+				{
+					g_AfxStreams.DrawRuleOfThirds = 0 != atoi(args->ArgV(3));
+					return;
+				}
+
+				Tier0_Msg(
+					"%s ruleOfThirds enabled 0|1\n"
+					"Current value: %i\n"
+					, arg0
+					, g_AfxStreams.DrawRuleOfThirds ? 1 : 0
+				);
+				return;
+			}
+		}
+	}
+
+	Tier0_Msg(
+		"%s phiGrid enabled [...]\n"
+		"%s ruleOfThirds enabled [...]\n"
 		, arg0
 		, arg0
 	);

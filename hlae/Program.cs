@@ -20,6 +20,14 @@ namespace AfxGui
             }
         }
 
+        internal static String AppDataDir
+        {
+            get
+            {
+                return m_AppDataDir;
+            }
+        }
+
         internal static System.Drawing.Icon Icon
         {
             get
@@ -33,6 +41,7 @@ namespace AfxGui
         // Private members:
 
         static String m_BaseDir;
+        static String m_AppDataDir;
         static System.Drawing.Icon m_Icon;
         static bool m_CustomLoaderHadHookDllPath = false;
 
@@ -320,11 +329,14 @@ namespace AfxGui
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            m_BaseDir = System.Windows.Forms.Application.StartupPath;
+            m_BaseDir = System.IO.Path.GetFullPath(System.Windows.Forms.Application.StartupPath).TrimEnd('\\','/');
+            m_AppDataDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HLAE");
+
+            if(!System.IO.Directory.Exists(m_AppDataDir)) System.IO.Directory.CreateDirectory(m_AppDataDir);
 
             m_Icon = System.Drawing.Icon.ExtractAssociatedIcon(System.Windows.Forms.Application.ExecutablePath);
 
-            GlobalConfig.Instance = Config.LoadOrCreate(String.Concat(m_BaseDir, "\\hlaeconfig.xml"));
+            GlobalConfig.Instance = Config.LoadOrCreate(System.IO.Path.Combine(m_AppDataDir, "hlaeconfig.xml"), System.IO.Path.Combine(m_BaseDir, "hlaeconfig.xml"));
             GlobalUpdateCheck.Instance = new UpdateCheck();
 
             ProcessCommandLine();
@@ -351,7 +363,7 @@ namespace AfxGui
             if (Globals.AutoStartCustomLoader)
             {
                 List<Loader.GetHookPathDelegate> getHookPaths = new List<Loader.GetHookPathDelegate>();
-                foreach (CfgInjectDll dll in GlobalConfig.Instance.Settings.CustomLoader.InjectDlls) getHookPaths.Add(isProcess64Bit => dll.Path);
+                foreach (CfgInjectDll dll in GlobalConfig.Instance.Settings.CustomLoader.InjectDlls) getHookPaths.Add(isProcess64Bit => dll.FullPath);
 
                 if (!Loader.Load(getHookPaths, GlobalConfig.Instance.Settings.CustomLoader.ProgramPath, GlobalConfig.Instance.Settings.CustomLoader.CmdLine))
                     bOk = false;

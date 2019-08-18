@@ -6,6 +6,107 @@
 
 <release>
 <name>AfxHookSource</name>
+<version>1.68.0</version>
+<time>2019-08-17T20:06Z</time>
+<changes>
+<change type="added">
+Added mirv_guides phiGrid enabled 0|1, will draw a white PHI Grid onto the game view, CS:GO only.<br />
+Added mirv_guides ruleOfThirds enabled 0|1, will draw a pink Rule of Thirds Grid onto the game view, CS:GO only.
+</change>
+<change type="updated">
+Update mirv_streams stream properties:<br />
+- forceBuildingCubeMaps is now always obeyed and off (0) for all templates by default. If you have it somewhere in your config, we recommend removing it.<br />
+- Added doBloomAndToneMapping and doDepthOfField properties: These are on "default" for the "normal" stream template (We recommend having only one normal stream and putting it first in the list of streams!) and off (0) for all other templates.<br />
+This change together with the new mainStream setting should fully fix #150 mirv_streams light glows bug.
+</change>
+<change type="added">
+Added mirv_streams mainStream setting, which allows to control which stream is considered the main stream for caching the full scene state.
+By default this is set to "firstActive", which means the first stream that is recorded or previewed is the main stream.
+Any other setting can mean a performance penalty, since the stream might need to be silently rendered first and re-rendered later on again.
+There's is also currently such a performance penalty for "firstActive" if you are using multi-preview (which most people don't).
+</change>
+<change type="updated">
+Breaking change: mirv_streams settings: names are now matched case-insensitively against each other.
+</change>
+<change type="added">
+Added mirv_streams settings presets afxFfmpegRaw (uncompressed AVI) and afxFfmpegHuffyuv (HuffYUV AVI).
+</change>
+<change type="fixed">
+Fixed problems with UTF-8 characters in mirv_loadlibrary command. Also changed AfxShader functions to use wide character version of fopen.
+</change>
+<change type="updated">
+Made game .exe detection case-insensitive.
+</change>
+</changes>
+</release>
+
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.67.0</version>
+<time>2019-08-09T06:58Z</time>
+<changes>
+<change type="added">
+Fixed and changed mirv_vpanel command:<br />
+mirv_vpanel command &lt;panelName&gt; &lt;sModule&gt; &lt;comand&gt; - Execute &lt;command&gt; on panel with name &lt;panelName&gt; in module &lt;sModule&gt; (options are case-sensitive, &lt;sModule&gt; can e.g. be BaseUI or ClientDLL).<br />
+Example: mirv_vpanel command DemoUIPanel BaseUI play<br />
+Possible &lt;command&gt; values for DemoUIPanel in BaseUI: uireload, gotostart, prevframe, play, nextframe, gotoend, timescale_quarter, timescale_half, timescale_one, timescale_2x, timescale_4x, nextround, previousround, nextdeath, prevdeath, load, edit, smooth, drive, stop
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.66.0</version>
+<time>2019-08-08T19:19Z</time>
+<changes>
+<change type="added">
+Added mirv_exec command:<br />
+mirv_exec &lt;sCommandName&gt; "&lt;arg1&gt;" ... "&lt;argN&gt;" - Pass arguments &lt;arg1&gt; to &lt;argN&gt; to command named &lt;sCommandName&gt;,  use {QUOTE} for ", \{ for {, \} for }.<br />
+Example: mirv_exec bind x "echo {QUOTE}你好{QUOTE}"
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.65.1</version>
+<time>2019-08-05T20:29Z</time>
+<changes>
+<change type="fixed">
+Fixed crash bug when removing an item from a mirv_streams multi settings item.
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.65.0</version>
+<time>2019-08-03T10:56</time>
+<changes>
+<change type="added">
+Added assistedflash and wipe properties to mirv_deathmsg (#206).<br />
+Example: <br />
+mirv_deathmsg filter add assisterId=0 assistedflash=0 // first entry (or use move)
+</change>
+<change type="added">
+Added mutli recording settings, example (#193):<br/>
+mirv_streams settings add multi multi<br/>
+mirv_streams settings edit multi add afxClassic<br/>
+mirv_streams settings edit multi add afxFfmpegYuv420p<br/>
+mirv_streams add normal norm<br/>
+mirv_streams edit norm settings multi<br/>
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
 <version>1.64.1</version>
 <time>2019-06-23T06:39Z</time>
 <changes>

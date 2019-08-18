@@ -78,6 +78,49 @@ CAfxStreams g_AfxStreams;
 
 ////////////////////////////////////////////////////////////////////////////////
 
+bool AfxOverrideable_FromConsole(const char * arg, CAfxBoolOverrideable & outValue)
+{
+	if (0 == _stricmp("default", arg))
+	{
+		outValue.AssignNoOverride();
+		return true;
+	}
+	else if (StringIsDigits(arg))
+	{
+		outValue = 0 != atoi(arg);
+		return true;
+	}
+
+	Tier0_Warning("AFXERROR: %s is not a valid value.\n");
+	return false;
+}
+
+void AfxOverridable_ToConsole(const CAfxBoolOverrideable & value)
+{
+	bool boolValue;
+	if (value.Get(boolValue)) Tier0_Msg("%i", boolValue ? 1 : 0);
+	else Tier0_Msg("default");
+}
+
+void AfxOverrideable_Console(IWrpCommandArgs * args, CAfxBoolOverrideable & value, const char * description)
+{
+	int argC = args->ArgC();
+
+	if (2 == argC)
+	{
+		const char * argValue = args->ArgV(1);
+		AfxOverrideable_FromConsole(argValue, value);
+		return;
+	}
+
+	Tier0_Msg("%s default|0|1", args->ArgV(0));
+	if (description) Tier0_Msg(" - %s", description);
+	Tier0_Msg("\n");
+	Tier0_Msg("Current value: ");
+	AfxOverridable_ToConsole(value);
+	Tier0_Msg("\n");
+}
+
 /* Doesn't work for some reason.
 void DebugDepthFixDraw(IMesh_csgo * pMesh)
 {
@@ -318,6 +361,31 @@ private:
 
 #endif
 
+class AfxDrawGuidesFunctor
+	: public CAfxFunctor
+{
+public:
+	AfxDrawGuidesFunctor(bool phiGrid, bool ruleOfThirds)
+		: m_PhiGrid(phiGrid)
+		, m_RuleOfThrids(ruleOfThirds)
+	{
+	}
+
+	virtual void operator()()
+	{
+		IAfxMatRenderContextOrg * context = GetCurrentContext()->GetOrg();
+
+		int x, y, width, height;
+		context->GetViewport(x, y, width, height);
+
+		AfxDrawGuides(x, y, width, height, m_PhiGrid, m_RuleOfThrids);
+	}
+
+private:
+	bool m_PhiGrid;
+	bool m_RuleOfThrids;
+};
+
 #ifdef AFX_INTEROP
 
 
@@ -477,35 +545,6 @@ private:
 
 #endif
 
-// CAfxFileTracker /////////////////////////////////////////////////////////////
-
-void CAfxFileTracker::TrackFile(char const * filePath)
-{
-	std::string str(filePath);
-
-	m_FilePaths.push(str);
-}
-
-void CAfxFileTracker::WaitForFiles(unsigned int maxUnfinishedFiles)
-{
-	while(m_FilePaths.size() > maxUnfinishedFiles)
-	{
-		FILE * file;
-
-		//Tier0_Msg("Waiting for file \"%s\" .... ", m_FilePaths.front().c_str());
-
-		do
-		{
-			file = fopen(m_FilePaths.front().c_str(), "rb+");
-		}while(!file);
-
-		fclose(file);
-
-		//Tier0_Msg("done.\n");
-
-		m_FilePaths.pop();
-	}
-}
 
 // CAfxRenderViewStream ////////////////////////////////////////////////////////
 
@@ -897,7 +936,7 @@ void CAfxSingleStream::CaptureEnd()
 	{
 		if (nullptr == m_OutVideoStream)
 		{
-			m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, buffer->Format, g_AfxStreams.GetStartHostFrameRate());
+			m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, buffer->Format, g_AfxStreams.GetStartHostFrameRate(), "");
 			if (nullptr == m_OutVideoStream)
 			{
 				Tier0_Warning("AFXERROR: Failed to create out video stream for %s.\n", this->StreamName_get());
@@ -1062,7 +1101,7 @@ void CAfxTwinStream::CaptureEnd()
 
 					if (nullptr == m_OutVideoStream)
 					{
-						m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferA->Format, g_AfxStreams.GetStartHostFrameRate());
+						m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferA->Format, g_AfxStreams.GetStartHostFrameRate(), "");
 						if (nullptr == m_OutVideoStream)
 						{
 							Tier0_Warning("AFXERROR: Failed to create out video stream for %s.\n", this->StreamName_get());
@@ -1157,7 +1196,7 @@ void CAfxTwinStream::CaptureEnd()
 
 					if (nullptr == m_OutVideoStream)
 					{
-						m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferA->Format, g_AfxStreams.GetStartHostFrameRate());
+						m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferA->Format, g_AfxStreams.GetStartHostFrameRate(), "");
 						m_OutVideoStream->AddRef();
 					}
 
@@ -1454,7 +1493,7 @@ void CAfxMatteStream::CaptureEnd()
 
 		if (nullptr == m_OutVideoStream)
 		{
-			m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferEntBlack->Format, g_AfxStreams.GetStartHostFrameRate());
+			m_OutVideoStream = m_Settings->CreateOutVideoStream(g_AfxStreams, *this, bufferEntBlack->Format, g_AfxStreams.GetStartHostFrameRate(), "");
 			if (nullptr == m_OutVideoStream)
 			{
 				Tier0_Warning("AFXERROR: Failed to create out video stream for %s.\n", this->StreamName_get());
@@ -1518,7 +1557,8 @@ CAfxBaseFxStream::CAfxBaseFxStream()
 
 	m_Shared.AddRef();
 
-	ForceBuildingCubemaps_set(true);
+	DoBloomAndToneMapping = false;
+	DoDepthOfField = false;
 
 	SetAction(m_ClientEffectTexturesAction, m_Shared.DrawAction_get());
 	SetAction(m_WorldTexturesAction, m_Shared.DrawAction_get());
@@ -5159,7 +5199,7 @@ IAfxMatRenderContextOrg * CAfxStreams::CaptureStream(IAfxMatRenderContextOrg * c
 	return ctxp;
 }
 
-IAfxMatRenderContextOrg * CAfxStreams::PreviewStream(IAfxMatRenderContextOrg * ctxp, CAfxRenderViewStream * previewStream, bool isLast, int slot, int cols, bool & hudDrawn, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer)
+IAfxMatRenderContextOrg * CAfxStreams::PreviewStream(IAfxMatRenderContextOrg * ctxp, CAfxRenderViewStream * previewStream, bool isLast, int slot, int cols, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer)
 {
 	if (0 < strlen(previewStream->AttachCommands_get()))
 		g_VEngineClient->ExecuteClientCmd(previewStream->AttachCommands_get()); // Execute commands before we lock the stream!
@@ -5243,16 +5283,6 @@ IAfxMatRenderContextOrg * CAfxStreams::PreviewStream(IAfxMatRenderContextOrg * c
 	newHudView.x += col * newHudView.width;
 	newHudView.y += row * newHudView.height;
 
-	if (1 < cols && (hudDrawn || m_Recording))
-	{
-		// Would not allow to render the HUD in different passses per frame):
-		//myWhatToDraw &= ~SOURCESDK::RENDERVIEW_DRAWHUD;
-	}
-	else
-	{
-		hudDrawn = hudDrawn || (myWhatToDraw & SOURCESDK::RENDERVIEW_DRAWHUD);
-	}
-
 	float oldSmokeOverlayAlphaFactor = *smokeOverlayAlphaFactor;
 	smokeOverlayAlphaFactorMultiplyer = previewStream->SmokeOverlayAlphaFactor_get();
 	if (smokeOverlayAlphaFactorMultiplyer < 1) *smokeOverlayAlphaFactor = 0;
@@ -5263,7 +5293,7 @@ IAfxMatRenderContextOrg * CAfxStreams::PreviewStream(IAfxMatRenderContextOrg * c
 		float oldFrameTime;
 		int oldBuildingCubeMaps;
 
-		if (m_FirstStreamToBeRendered)
+		if (true || m_FirstStreamToBeRendered)
 		{
 			forceBuildingCubeMaps = previewStream->ForceBuildingCubemaps_get();
 		}
@@ -5283,11 +5313,68 @@ IAfxMatRenderContextOrg * CAfxStreams::PreviewStream(IAfxMatRenderContextOrg * c
 
 		ctxp->PushRenderTargetAndViewport(0, 0, newView.m_nUnscaledX, newView.m_nUnscaledY, newView.m_nUnscaledWidth, newView.m_nUnscaledHeight);
 
+
+		bool oldDoBloomAndToneMapping;
+		bool overrideDoBloomAndToneMapping;
+		{
+			bool value;
+			if (overrideDoBloomAndToneMapping = previewStream->DoBloomAndToneMapping.Get(value))
+			{
+				oldDoBloomAndToneMapping = newView.m_bDoBloomAndToneMapping;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bDoBloomAndToneMapping = value;
+			}
+		}
+		bool oldDoDepthOfField;
+		bool overrideDoDepthOfField;
+		{
+			bool value;
+			if (overrideDoDepthOfField = previewStream->DoDepthOfField.Get(value))
+			{
+				oldDoDepthOfField = newView.m_bDoDepthOfField;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bDoDepthOfField = value;
+			}
+		}
+		bool oldDrawWorldNormal;
+		bool overrideDrawWorldNormal;
+		{
+			bool value;
+			if (overrideDrawWorldNormal = previewStream->DrawWorldNormal.Get(value))
+			{
+				oldDrawWorldNormal = newView.m_bDrawWorldNormal;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bDrawWorldNormal = value;
+			}
+		}
+		bool oldCullFrontFaces;
+		bool overrideCullFrontFaces;
+		{
+			bool value;
+			if (overrideCullFrontFaces = previewStream->CullFrontFaces.Get(value))
+			{
+				oldCullFrontFaces = newView.m_bCullFrontFaces;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bCullFrontFaces = value;
+			}
+		}
+		bool oldRenderFlashlightDepthTranslucents;
+		bool overrideRenderFlashlightDepthTranslucents;
+		{
+			bool value;
+			if (overrideRenderFlashlightDepthTranslucents = previewStream->RenderFlashlightDepthTranslucents.Get(value))
+			{
+				oldRenderFlashlightDepthTranslucents = newView.m_bRenderFlashlightDepthTranslucents;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bRenderFlashlightDepthTranslucents = value;
+			}
+		}
 		previewStream->OnRenderBegin(nullptr, afxViewport, viewToProjection, viewToProjectionSky);
 
 		DoRenderView(fn, this_ptr, newView, newHudView, nClearFlags, myWhatToDraw);
 
 		previewStream->OnRenderEnd();
+
+		if (overrideRenderFlashlightDepthTranslucents) const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bRenderFlashlightDepthTranslucents = oldRenderFlashlightDepthTranslucents;
+		if (overrideCullFrontFaces) const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bCullFrontFaces = oldCullFrontFaces;
+		if (overrideDrawWorldNormal) const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bDrawWorldNormal = oldDrawWorldNormal;
+		if (overrideDoDepthOfField) const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bDoDepthOfField = oldDoDepthOfField;
+		if (overrideDoBloomAndToneMapping) const_cast<SOURCESDK::CViewSetup_csgo &>(newView).m_bDoBloomAndToneMapping = oldDoBloomAndToneMapping;
 
 		ctxp->PopRenderTargetAndViewport();
 
@@ -5368,7 +5455,19 @@ void CAfxStreams::DoRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, c
 	}
 #endif
 
+	bool oldCacheFullSceneState;
+	if (m_ForceCacheFullSceneState)
+	{
+		oldCacheFullSceneState = view.m_bCacheFullSceneState;
+		const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bCacheFullSceneState = true;
+	}
+
 	fn(this_ptr, view, hudViewSetup, nClearFlags, whatToDraw);
+
+	if (m_ForceCacheFullSceneState)
+	{
+		const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bCacheFullSceneState = oldCacheFullSceneState;
+	}
 
 #ifdef AFX_INTEROP
 	if (AfxInterop::Enabled())
@@ -5392,8 +5491,60 @@ void CAfxStreams::DoRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, c
 #endif
 }
 
+void CAfxStreams::CalcMainStream()
+{
+	switch (m_MainStreamMode)
+	{
+	case MainStreamMode_None:
+		m_MainStream = nullptr;
+		break;
+	case MainStreamMode_FirstActive:
+		m_MainStream = nullptr;
+		if (m_Recording)
+		{
+			for (std::list<CAfxRecordStream *>::iterator it = m_Streams.begin(); it != m_Streams.end(); )
+			{
+				CAfxRecordStream * recordStream = *it;
+				if (recordStream->Record_get())
+				{
+					m_MainStream = recordStream;
+					break;
+				}
+			}
+		}
+		else
+		{
+			for (int i = 0; i < 16; ++i)
+			{
+				if (m_PreviewStreams[i])
+				{
+					if (1 <= m_PreviewStreams[i]->GetStreamCount())
+					{
+						m_MainStream = m_PreviewStreams[i];
+						break;
+					}
+				}
+			}
+		}
+		break;
+	case MainStreamMode_First:
+		m_MainStream = nullptr;
+		for (std::list<CAfxRecordStream *>::iterator it = m_Streams.begin(); it != m_Streams.end(); )
+		{
+			CAfxRecordStream * recordStream = *it;
+			m_MainStream = recordStream;
+			break;
+		}
+		break;
+	case MainStreamMode_Set:
+		break;
+	}
+}
+
 void CAfxStreams::OnRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer)
 {
+	m_ForceCacheFullSceneState = false;
+
 	smokeOverlayAlphaFactorMultiplyer = 1;
 
 	m_CurrentView = &view;
@@ -5410,8 +5561,106 @@ void CAfxStreams::OnRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, c
 
 	IAfxMatRenderContextOrg * ctxp = GetCurrentContext()->GetOrg();
 
-	CAfxRecordStream * mainStream = nullptr;
 	m_FirstStreamToBeRendered = true;
+
+	CalcMainStream();
+
+	if (m_Recording && m_MainStream && m_MainStream->Record_get())
+	{
+		// We can render and record it as first thing.
+
+		m_ForceCacheFullSceneState = true; // There's always another render in this case at the moment, so cache!
+
+		// Record it first
+		ctxp = CaptureStream(ctxp, m_MainStream, fn, this_ptr, view, hudViewSetup, nClearFlags, whatToDraw, smokeOverlayAlphaFactor, smokeOverlayAlphaFactorMultiplyer);
+	}
+	else if (m_MainStream)
+	{
+		// There's a main stream, but it's not recorded.
+
+		// If there's more streams to be rendered, then we need to cache the scene state:
+
+		bool otherStreams = false;
+
+		if (m_Recording)
+		{
+			for (std::list<CAfxRecordStream *>::iterator it = m_Streams.begin(); it != m_Streams.end(); ++it)
+			{
+				if (!(*it)->Record_get() || (*it) == m_MainStream) continue;
+
+				otherStreams = true;
+				break;
+			}
+		}
+
+		for (int i = 0; i < 16; ++i)
+		{
+			if (m_PreviewStreams[i])
+			{
+				if (1 <= m_PreviewStreams[i]->GetStreamCount() && (i != 0 || m_PreviewStreams[i] != m_MainStream))
+				{
+					otherStreams = true;
+				}
+			}
+		}
+
+
+		// Just render it:
+
+		if (otherStreams) m_ForceCacheFullSceneState = true;
+
+		CAfxRenderViewStream * previewStream = m_MainStream->GetStream(0);
+		ctxp = PreviewStream(ctxp, previewStream, !otherStreams, 0, 1, fn, this_ptr, view, hudViewSetup, nClearFlags, whatToDraw, smokeOverlayAlphaFactor, smokeOverlayAlphaFactorMultiplyer);
+	}
+	else
+	{
+		// There is no mainstream, so use the original game (if there's other streams):
+
+		bool otherStreams = false;
+
+		if (m_Recording)
+		{
+			for (std::list<CAfxRecordStream *>::iterator it = m_Streams.begin(); it != m_Streams.end(); ++it)
+			{
+				if (!(*it)->Record_get()) continue;
+
+				otherStreams = true;
+				break;
+			}
+		}
+
+		for (int i = 0; i < 16; ++i)
+		{
+			if (m_PreviewStreams[i])
+			{
+				if (1 <= m_PreviewStreams[i]->GetStreamCount())
+				{
+					otherStreams = true;
+				}
+			}
+		}
+
+		// Render it only if there's other streams:
+		if (otherStreams)
+		{			
+			m_ForceCacheFullSceneState = true; // There's more streams to be rendered, so we need to cache the scene state.
+			DoRenderView(fn, this_ptr, view, hudViewSetup, nClearFlags, whatToDraw);
+
+			if (!m_PresentBlocked)
+			{
+				BlockPresent(ctxp, true);
+				m_PresentBlocked = true;
+			}
+
+			// Work around game running out of memory because of too much shit on the queue
+			// aka issue ripieces/advancedfx-prop#22 by using a sub-context:
+			m_MaterialSystem->EndFrame();
+			m_MaterialSystem->SwapBuffers(); // Apparently we have to do this always, otherwise the state is messed up.
+			m_MaterialSystem->BeginFrame(0);
+
+			ctxp = GetCurrentContext()->GetOrg(); // We are potentially on a new context now
+		}
+	}
 
 	if (m_Recording)
 	{
@@ -5421,38 +5670,9 @@ void CAfxStreams::OnRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, c
 		}
 		else
 		{
-			/*
 			for (std::list<CAfxRecordStream *>::iterator it = m_Streams.begin(); it != m_Streams.end(); ++it)
 			{
-				if (CAfxSingleStream * curSingle = (*it)->AsAfxSingleStream())
-				{
-					if (curSingle->Stream_get()->IsMainStream())
-					{
-						mainStream = (*it);
-						break;
-					}
-				}
-				if (CAfxTwinStream * curTwin = (*it)->AsAfxTwinStream())
-				{
-					if (curTwin->StreamA_get()->IsMainStream() || curTwin->StreamB_get()->IsMainStream())
-					{
-						mainStream = (*it);
-						break;
-					}
-				}
-			}
-			*/
-
-			if (mainStream && mainStream->Record_get())
-			{
-				ctxp = CaptureStream(ctxp, mainStream, fn, this_ptr, view, hudViewSetup, nClearFlags, whatToDraw, smokeOverlayAlphaFactor, smokeOverlayAlphaFactorMultiplyer);
-			}
-
-			for (std::list<CAfxRecordStream *>::iterator it = m_Streams.begin(); it != m_Streams.end(); ++it)
-			{
-				if (!(*it)->Record_get() || (*it) == mainStream) continue;
-
-				bool hudDrawn = false;
+				if (!(*it)->Record_get() || (*it) == m_MainStream) continue;
 
 				ctxp = CaptureStream(ctxp, (*it), fn, this_ptr, view, hudViewSetup, nClearFlags, whatToDraw, smokeOverlayAlphaFactor, smokeOverlayAlphaFactorMultiplyer);
 			}
@@ -5521,17 +5741,21 @@ void CAfxStreams::OnRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, c
 
 			int num = 0;
 
-			bool hudDrawn = false;
-
 			for (std::map<int, CAfxRenderViewStream *>::iterator it = previewStreams.begin(); it != previewStreams.end(); ++it)
 			{
 				int slot = it->first;
+
+				if (!m_Recording && slot == 0 && previewStreams.size() == 1 && m_PreviewStreams[slot] == m_MainStream)
+				{
+					// This streams has been rendered correctly alreday, no need to render it again.
+					continue;
+				}
 
 				slot = cols * cols - slot - 1; // We draw backwards (bottom,right) -> (top,left) in order to solve some weird problem.
 
 				CAfxRenderViewStream * previewStream = it->second;
 
-				ctxp = PreviewStream(ctxp, previewStream, num + 1 == (int)previewStreams.size(), slot, cols, hudDrawn, fn, this_ptr, view, hudViewSetup, nClearFlags, whatToDraw, smokeOverlayAlphaFactor, smokeOverlayAlphaFactorMultiplyer);
+				ctxp = PreviewStream(ctxp, previewStream, num + 1 == (int)previewStreams.size(), slot, cols, fn, this_ptr, view, hudViewSetup, nClearFlags, whatToDraw, smokeOverlayAlphaFactor, smokeOverlayAlphaFactorMultiplyer);
 
 				++num;
 			}
@@ -5627,6 +5851,11 @@ void CAfxStreams::OnDrawingHudBegin(void)
 	IAfxMatRenderContext * afxMatRenderContext = GetCurrentContext();
 
 	if (IAfxStreamContext * hook = FindStreamContext(afxMatRenderContext)) hook->DrawingHudBegin();
+
+	if (DrawPhiGrid || DrawRuleOfThirds)
+	{
+		QueueOrExecute(afxMatRenderContext->GetOrg(), new CAfxLeafExecute_Functor(new AfxDrawGuidesFunctor(DrawPhiGrid, DrawRuleOfThirds)));
+	}
 
 #ifdef AFX_INTEROP
 	if (AfxInterop::Enabled())
@@ -6237,6 +6466,12 @@ void CAfxStreams::Console_RemoveStream(const char * streamName)
 				}
 			}
 
+			if (m_MainStream == cur)
+			{
+				m_MainStream = nullptr;
+				m_MainStreamMode = MainStreamMode_First;
+			}
+
 			m_Streams.erase(it);
 
 			cur->WaitLastRefAndLock();
@@ -6246,6 +6481,63 @@ void CAfxStreams::Console_RemoveStream(const char * streamName)
 		}
 	}
 	Tier0_Msg("Error: invalid streamName.\n");
+}
+
+void CAfxStreams::Console_MainStream(IWrpCommandArgs * args)
+{
+	int argC = args->ArgC();
+	const char * arg0 = args->ArgV(0);
+
+	if (2 <= argC)
+	{
+		const char * arg1 = args->ArgV(1);
+
+		if (0 == _stricmp("none", arg1))
+		{
+			m_MainStreamMode = MainStreamMode_None;
+			return;
+		}
+		else if (0 == _stricmp("firstActive", arg1))
+		{
+			m_MainStreamMode = MainStreamMode_FirstActive;
+			return;
+		}
+		else if (0 == _stricmp("first", arg1))
+		{
+			m_MainStreamMode = MainStreamMode_First;
+			return;
+		}
+		else if (0 == _stricmp("set", arg1) && 3 <= argC)
+		{
+			const char * arg2 = args->ArgV(2);
+
+			for (std::list<CAfxRecordStream *>::iterator it = m_Streams.begin(); it != m_Streams.end(); ++it)
+			{
+				if (!_stricmp(arg2, (*it)->StreamName_get()))
+				{
+					m_MainStreamMode = MainStreamMode_Set;
+					m_MainStream = *it;
+					return;
+				}
+			}
+
+			Tier0_Warning("AFXERROR: Stream %s not found.\n", arg2);
+			return;
+		}
+	}
+
+	Tier0_Msg(
+		"%s none - Never use a mainstream, instead always do a (hidden) render to cache the scene sate.\n"
+		"%s firstActive - Default: The first stream recorded or previewed is considered the main stream.\n"
+		"%s first -The first stream in the list is considered the main stream.\n"
+		"%s set <sStreamName> - Set a stream named <sStreamName> to use as main stream.\n"
+		"Current value: %s%s\n"
+		, arg0
+		, arg0
+		, arg0
+		, m_MainStreamMode == MainStreamMode_None ? "none" : (m_MainStreamMode == MainStreamMode_FirstActive ? "firstActive" : (m_MainStreamMode == MainStreamMode_First ? "first" : (m_MainStreamMode == MainStreamMode_Set ? "set " : "")))
+		, m_MainStreamMode == MainStreamMode_Set ? m_MainStream->StreamName_get() : ""
+	);
 }
 
 void CAfxStreams::Console_PreviewStream(const char * streamName, int slot)
@@ -6545,6 +6837,36 @@ bool CAfxStreams::Console_EditStream(CAfxRenderViewStream * stream, IWrpCommandA
 					, cmdPrefix
 					, Console_FromStreamCaptureType(curRenderView->StreamCaptureType_get())
 				);
+				return true;
+			}
+			else if (0 == _stricmp("doBloomAndToneMapping", cmd0))
+			{
+				CSubWrpCommandArgs subArgs(args, 2);
+				AfxOverrideable_Console(&subArgs, curRenderView->DoBloomAndToneMapping, NULL);
+				return true;
+			}
+			else if (0 == _stricmp("doDepthOfField", cmd0))
+			{
+				CSubWrpCommandArgs subArgs(args, 2);
+				AfxOverrideable_Console(&subArgs, curRenderView->DoDepthOfField, NULL);
+				return true;
+			}
+			else if (0 == _stricmp("drawWorldNormal", cmd0))
+			{
+				CSubWrpCommandArgs subArgs(args, 2);
+				AfxOverrideable_Console(&subArgs, curRenderView->DrawWorldNormal, NULL);
+				return true;
+			}
+			else if (0 == _stricmp("cullFrontFaces", cmd0))
+			{
+				CSubWrpCommandArgs subArgs(args, 2);
+				AfxOverrideable_Console(&subArgs, curRenderView->CullFrontFaces, NULL);
+				return true;
+			}
+			else if (0 == _stricmp("renderFlashlightDepthTranslucents", cmd0))
+			{
+				CSubWrpCommandArgs subArgs(args, 2);
+				AfxOverrideable_Console(&subArgs, curRenderView->RenderFlashlightDepthTranslucents, NULL);
 				return true;
 			}
 		}
@@ -7573,6 +7895,11 @@ bool CAfxStreams::Console_EditStream(CAfxRenderViewStream * stream, IWrpCommandA
 		Tier0_Msg("%s drawViewModel [...] - Controls whether or not view model (in-eye weapon) is drawn for this stream.\n", cmdPrefix);
 		Tier0_Msg("%s forceBuildingCubeMaps [...] - Control if to enable force building_cubemaps to 1. This should be set on all streams that are composited with other streams or should not have any postprocessing. For technical reasons only the first stream rendered (recorded or previewd) will obey this option, others always force this.\n", cmdPrefix);
 		Tier0_Msg("%s captureType [...] - Stream capture type.\n", cmdPrefix);
+		Tier0_Msg("%s doBloomAndToneMapping [...]\n", cmdPrefix);
+		Tier0_Msg("%s doDepthOfField [...]\n", cmdPrefix);
+		//Tier0_Msg("%s drawWorldNormal [...]\n", cmdPrefix);
+		//Tier0_Msg("%s cullFrontFaces [...]\n", cmdPrefix);
+		//Tier0_Msg("%s renderFlashlightDepthTranslucents [...]\n", cmdPrefix);
 	}
 
 	return false;
@@ -8017,7 +8344,7 @@ IAfxMatRenderContextOrg * CAfxStreams::CaptureStreamToBuffer(IAfxMatRenderContex
 		float oldFrameTime;
 		int oldBuildingCubeMaps;
 
-		if (m_FirstStreamToBeRendered)
+		if (true || m_FirstStreamToBeRendered)
 		{
 			forceBuildingCubeMaps = stream->ForceBuildingCubemaps_get();
 		}
@@ -8053,6 +8380,57 @@ IAfxMatRenderContextOrg * CAfxStreams::CaptureStreamToBuffer(IAfxMatRenderContex
 			}
 		}
 
+		bool oldDoBloomAndToneMapping;
+		bool overrideDoBloomAndToneMapping;
+		{
+			bool value;
+			if (overrideDoBloomAndToneMapping = stream->DoBloomAndToneMapping.Get(value))
+			{
+				oldDoBloomAndToneMapping = view.m_bDoBloomAndToneMapping;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bDoBloomAndToneMapping = value;
+			}
+		}
+		bool oldDoDepthOfField;
+		bool overrideDoDepthOfField;
+		{
+			bool value;
+			if (overrideDoDepthOfField = stream->DoDepthOfField.Get(value))
+			{
+				oldDoDepthOfField = view.m_bDoDepthOfField;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bDoDepthOfField = value;
+			}
+		}
+		bool oldDrawWorldNormal;
+		bool overrideDrawWorldNormal;
+		{
+			bool value;
+			if (overrideDrawWorldNormal = stream->DrawWorldNormal.Get(value))
+			{
+				oldDrawWorldNormal = view.m_bDrawWorldNormal;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bDrawWorldNormal = value;
+			}
+		}
+		bool oldCullFrontFaces;
+		bool overrideCullFrontFaces;
+		{
+			bool value;
+			if (overrideCullFrontFaces = stream->CullFrontFaces.Get(value))
+			{
+				oldCullFrontFaces = view.m_bCullFrontFaces;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bCullFrontFaces = value;
+			}
+		}
+		bool oldRenderFlashlightDepthTranslucents;
+		bool overrideRenderFlashlightDepthTranslucents;
+		{
+			bool value;
+			if (overrideRenderFlashlightDepthTranslucents = stream->RenderFlashlightDepthTranslucents.Get(value))
+			{
+				oldRenderFlashlightDepthTranslucents = view.m_bRenderFlashlightDepthTranslucents;
+				const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bRenderFlashlightDepthTranslucents = value;
+			}
+		}
+
 		stream->OnRenderBegin(captureTarget->GetBasefxStreamModifier(streamIndex), afxViewport, viewToProjection, viewToProjectionSky);
 
 		DoRenderView(fn, this_ptr, view, hudViewSetup, SOURCESDK::VIEW_CLEAR_STENCIL | SOURCESDK::VIEW_CLEAR_DEPTH, myWhatToDraw);
@@ -8065,6 +8443,12 @@ IAfxMatRenderContextOrg * CAfxStreams::CaptureStreamToBuffer(IAfxMatRenderContex
 		);
 
 		stream->OnRenderEnd();
+
+		if (overrideRenderFlashlightDepthTranslucents) const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bRenderFlashlightDepthTranslucents = oldRenderFlashlightDepthTranslucents;
+		if (overrideCullFrontFaces) const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bCullFrontFaces = oldCullFrontFaces;
+		if (overrideDrawWorldNormal) const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bDrawWorldNormal = oldDrawWorldNormal;
+		if (overrideDoDepthOfField) const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bDoDepthOfField = oldDoDepthOfField;
+		if (overrideDoBloomAndToneMapping) const_cast<SOURCESDK::CViewSetup_csgo &>(view).m_bDoBloomAndToneMapping = oldDoBloomAndToneMapping;
 
 		if (isDepthF)
 		{
@@ -8491,22 +8875,32 @@ CAfxClassicRecordingSettings::CShared::CShared()
 	m_NamedSettings.emplace(m_DefaultSettings->GetName(), m_DefaultSettings);
 
 	{
-		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpeg", true, "-c:v libx264 -preset slow -crf 22 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpeg", true, "-c:v libx264 -preset slow -crf 22 {QUOTE}{AFX_STREAM_PATH}video.mp4{QUOTE}");
 		m_NamedSettings.emplace(settings->GetName(), settings);
 	}
 
 	{
-		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegYuv420p", true, "-c:v libx264 -pix_fmt yuv420p -preset slow -crf 22 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegYuv420p", true, "-c:v libx264 -pix_fmt yuv420p -preset slow -crf 22 {QUOTE}{AFX_STREAM_PATH}video.mp4{QUOTE}");
 		m_NamedSettings.emplace(settings->GetName(), settings);
 	}
 
 	{
-		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegLosslessFast", true, "-c:v libx264rgb -preset ultrafast -crf 0 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegLosslessFast", true, "-c:v libx264rgb -preset ultrafast -crf 0 {QUOTE}{AFX_STREAM_PATH}video.mp4{QUOTE}");
 		m_NamedSettings.emplace(settings->GetName(), settings);
 	}
 
 	{
-		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegLosslessBest", true, "-c:v libx264rgb -preset veryslow -crf 0 {QUOTE}{AFX_STREAM_PATH}\\video.mp4{QUOTE}");
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegLosslessBest", true, "-c:v libx264rgb -preset veryslow -crf 0 {QUOTE}{AFX_STREAM_PATH}video.mp4{QUOTE}");
+		m_NamedSettings.emplace(settings->GetName(), settings);
+	}
+
+	{
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegRaw", true, "-c:v rawvideo {QUOTE}{AFX_STREAM_PATH}video.avi{QUOTE}");
+		m_NamedSettings.emplace(settings->GetName(), settings);
+	}
+
+	{
+		CAfxRecordingSettings * settings = new CAfxFfmpegRecordingSettings("afxFfmpegHuffyuv", true, "-c:v huffyuv {QUOTE}{AFX_STREAM_PATH}video.avi{QUOTE}");
 		m_NamedSettings.emplace(settings->GetName(), settings);
 	}
 
@@ -8617,10 +9011,31 @@ void CAfxRecordingSettings::Console(IWrpCommandArgs * args)
 				}
 				return;
 			}
+			else if (4 == argC && 0 == _stricmp("multi", args->ArgV(2)))
+			{
+				const char * arg3 = args->ArgV(3);
+
+				if (StringIBeginsWith(arg3, "afx"))
+				{
+					Tier0_Warning("AFXERROR: Custom presets must not begin with \"afx\".\n");
+				}
+				else if (nullptr != GetByName(arg3))
+				{
+					Tier0_Warning("AFXERROR: There is already a setting named %s\n", arg3);
+				}
+				else
+				{
+					CAfxRecordingSettings * settings = new CAfxMultiRecordingSettings(arg3, false);
+					m_Shared.m_NamedSettings.emplace(settings->GetName(), settings);
+				}
+				return;
+			}
 
 			Tier0_Msg(
 				"%s add ffmpeg <name> \"<yourOptionsHere>\" - Adds an FFMPEG setting, <yourOptionsHere> are output options, use {QUOTE} for \", {AFX_STREAM_PATH} for the folder path of the stream, \\{ for {, \\} for }. For an example see one of the afxFfmpeg* templates (edit them).\n"
 				"%s add sampler <name> - Adds a sampler with 30 fps and default settings, edit it afterwars to change them.\n"
+				"%s add multi <name> - Adds multi settings, edit it afterwars to add settings to it.\n"
+				, arg0
 				, arg0
 				, arg0
 			);
@@ -8648,14 +9063,16 @@ void CAfxClassicRecordingSettings::Console_Edit(IWrpCommandArgs * args)
 	Tier0_Warning("The classic settings are controlled through mirv_streams settings and can not be edited.\n");
 }
 
-CAfxOutVideoStream * CAfxClassicRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat, float frameRate) const
+CAfxOutVideoStream * CAfxClassicRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat, float frameRate, const char * pathSuffix) const
 {
 	std::wstring wideStreamName;
-	if (UTF8StringToWideString(stream.StreamName_get(), wideStreamName))
+	std::wstring widePathSuffix;
+	if (UTF8StringToWideString(stream.StreamName_get(), wideStreamName) && UTF8StringToWideString(pathSuffix, widePathSuffix))
 	{
 		std::wstring capturePath(streams.GetTakeDir());
 		capturePath.append(L"\\");
 		capturePath.append(wideStreamName);
+		capturePath.append(widePathSuffix);
 
 		CAfxRenderViewStream::StreamCaptureType captureType = stream.GetCaptureType();
 
@@ -8663,7 +9080,7 @@ CAfxOutVideoStream * CAfxClassicRecordingSettings::CreateOutVideoStream(const CA
 	}
 	else
 	{
-		Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", stream.StreamName_get());
+		Tier0_Warning("AFXERROR: Could not convert \"%s\" and \"%s\" from UTF8 to wide string.\n", stream.StreamName_get(), pathSuffix);
 	}
 
 	return nullptr;
@@ -8712,30 +9129,39 @@ void CAfxFfmpegRecordingSettings::Console_Edit(IWrpCommandArgs * args)
 	);
 }
 
-CAfxOutVideoStream * CAfxFfmpegRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat, float frameRate) const
+CAfxOutVideoStream * CAfxFfmpegRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat, float frameRate, const char * pathSuffix) const
 {
-	std::wstring wideOptions;
-	if (UTF8StringToWideString(m_FfmpegOptions.c_str(), wideOptions))
+	std::wstring widePathSuffix;
+	if (UTF8StringToWideString(pathSuffix, widePathSuffix))
 	{
-		std::wstring wideStreamName;
-		if (UTF8StringToWideString(stream.StreamName_get(), wideStreamName))
+		std::wstring wideOptions;
+		if (UTF8StringToWideString(m_FfmpegOptions.c_str(), wideOptions))
 		{
-			std::wstring capturePath(streams.GetTakeDir());
-			capturePath.append(L"\\");
-			capturePath.append(wideStreamName);
+			std::wstring wideStreamName;
+			if (UTF8StringToWideString(stream.StreamName_get(), wideStreamName))
+			{
+				std::wstring capturePath(streams.GetTakeDir());
+				capturePath.append(L"\\");
+				capturePath.append(wideStreamName);
+				capturePath.append(widePathSuffix);
 
-			CAfxRenderViewStream::StreamCaptureType captureType = stream.GetCaptureType();
+				CAfxRenderViewStream::StreamCaptureType captureType = stream.GetCaptureType();
 
-			return new CAfxOutFFMPEGVideoStream(imageFormat, capturePath, wideOptions, frameRate);
+				return new CAfxOutFFMPEGVideoStream(imageFormat, capturePath, wideOptions, frameRate);
+			}
+			else
+			{
+				Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", stream.StreamName_get());
+			}
 		}
 		else
 		{
-			Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", stream.StreamName_get());
+			Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", m_FfmpegOptions.c_str());
 		}
 	}
 	else
 	{
-		Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", m_FfmpegOptions.c_str());
+		Tier0_Warning("AFXERROR: Could not convert \"%s\" from UTF8 to wide string.\n", pathSuffix);
 	}
 
 	return nullptr;
@@ -8767,7 +9193,7 @@ void CAfxDefaultRecordingSettings::Console_Edit(IWrpCommandArgs * args)
 				}
 				else if(settings->InheritsFrom(this))
 				{
-					Tier0_Warning("AFXERROR: Can not assign a setting that we depends on this setting.\n");
+					Tier0_Warning("AFXERROR: Can not assign a setting that depends on this setting.\n");
 				}
 				else
 				{
@@ -8795,13 +9221,112 @@ void CAfxDefaultRecordingSettings::Console_Edit(IWrpCommandArgs * args)
 	);
 }
 
+// CAfxMultiRecordingSettings //////////////////////////////////////////////////
+
+
+void CAfxMultiRecordingSettings::Console_Edit(IWrpCommandArgs * args)
+{
+	Tier0_Msg("%s (type multi) recording setting options:\n", m_Name.c_str());
+
+	int argC = args->ArgC();
+	const char * arg0 = args->ArgV(0);
+
+	if (2 <= argC)
+	{
+		const char * arg1 = args->ArgV(1);
+
+		if (0 == _stricmp("add", arg1))
+		{
+			if (3 == argC)
+			{
+				CAfxRecordingSettings * settings = CAfxRecordingSettings::GetByName(args->ArgV(2));
+
+				if (nullptr == settings)
+				{
+					Tier0_Warning("AFXERROR: There's no setting named %s.\n", args->ArgV(2));
+				}
+				else if (settings->InheritsFrom(this))
+				{
+					Tier0_Warning("AFXERROR: Can not assign a setting that depends on this setting.\n");
+				}
+				else
+				{
+					if (settings) settings->AddRef();
+					m_Settings.push_back(settings);
+				}
+
+				return;
+			}
+
+			Tier0_Msg(
+				"%s add <settingsName> - Add settings with name <settingsName>.\n"
+				, arg0
+			);
+			return;
+		}
+		else if (0 == _stricmp("remove", arg1))
+		{
+			if (3 == argC)
+			{
+				CAfxRecordingSettings * settings = CAfxRecordingSettings::GetByName(args->ArgV(2));
+
+				if (nullptr == settings)
+				{
+					Tier0_Warning("AFXERROR: There's no setting named %s.\n", args->ArgV(2));
+				}
+				else
+				{
+					for (auto it = m_Settings.begin(); it != m_Settings.end(); ++it)
+					{
+						CAfxRecordingSettings * itSettings = *it;
+						if (itSettings == settings)
+						{
+							it = m_Settings.erase(it);
+							itSettings->Release();
+						}
+					}
+				}
+
+				return;
+			}
+
+			Tier0_Msg(
+				"%s remove <settingsName> - Remove settings with name <settingsName>.\n"
+				, arg0
+			);
+			return;
+		}
+		else if (0 == _stricmp("print", arg1))
+		{
+			int idx = 0;
+			for (auto it = m_Settings.begin(); it != m_Settings.end(); ++it)
+			{
+				CAfxRecordingSettings * itSettings = *it;
+				Tier0_Msg("%i: %s\n", idx, itSettings ? itSettings->GetName() : "[null]");
+				++idx;
+			}
+			if (0 == idx) Tier0_Msg("[empty]\n");
+			return;
+		}
+	}
+
+	Tier0_Msg(
+		"%s add <settingsName> - Add settings.\n"
+		"%s remove <settingsName> - Remove settings.\n"
+		"%s print <settingsName> - List settings.\n"
+		, arg0
+		, arg0
+		, arg0
+	);
+}
+
 // CAfxSamplingRecordingSettings ///////////////////////////////////////////////
 
-CAfxOutVideoStream * CAfxSamplingRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat, float frameRate) const
+CAfxOutVideoStream * CAfxSamplingRecordingSettings::CreateOutVideoStream(const CAfxStreams & streams, const CAfxRecordStream & stream, const CAfxImageFormat & imageFormat, float frameRate, const char * pathSuffix) const
 {
 	if (m_OutputSettings)
 	{
-		if (CAfxOutVideoStream * outVideoStream = m_OutputSettings->CreateOutVideoStream(streams, stream, imageFormat, m_OutFps))
+		if (CAfxOutVideoStream * outVideoStream = m_OutputSettings->CreateOutVideoStream(streams, stream, imageFormat, m_OutFps, pathSuffix))
 		{
 			return new CAfxOutSamplingStream(imageFormat, outVideoStream, frameRate, m_Method, m_OutFps ? 1.0 / m_OutFps : 0.0, m_Exposure, m_FrameStrength);
 		}
@@ -8833,7 +9358,7 @@ void CAfxSamplingRecordingSettings::Console_Edit(IWrpCommandArgs * args)
 				}
 				else if (settings->InheritsFrom(this))
 				{
-					Tier0_Warning("AFXERROR: Can not assign a setting that we depends on this setting.\n");
+					Tier0_Warning("AFXERROR: Can not assign a setting that depends on this setting.\n");
 				}
 				else
 				{

@@ -3,6 +3,99 @@
 
 <changelog>
 
+<release>
+<name>HLAE</name>
+<version>2.79.0</version>
+<time>2019-08-17T20:06Z</time>
+<changes>
+<change type="updated">
+Included AfxHookSource 1.68.0 (2019-08-17T20:06Z).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.78.0</version>
+<time>2019-08-09T06:58Z</time>
+<changes>
+<change type="updated">
+Included AfxHookSource 1.67.0 (2019-08-09T06:58Z).
+</change>
+</changes>
+</release>
+
+
+
+<release>
+<name>HLAE</name>
+<version>2.77.0</version>
+<time>2019-08-08T19:19Z</time>
+<changes>
+<change type="fixed">
+Fixed missing and mixed up files in HLAE_Setup.exe (installer version).
+</change>
+<change type="updated">
+Included AfxHookSource 1.66.0 (2019-08-08T19:19Z).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.76.2.1</version>
+<time>2019-08-05T20:29Z</time>
+<changes>
+<change type="fixed">
+Fixed HLAE_Setup.exe loading in wrong language.
+</change>
+<change type="added">
+Added zn-CH translations to installer. (Thanks to Purple-CSGO and tediorelee!)
+</change>
+<change type="updated">
+Included AfxHookSource 1.65.1 (2019-08-05T20:29Z).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.76.0.1</version>
+<time>2019-08-03T10:56Z</time>
+<changes>
+<change type="updated">
+Changed config load/save behavior: hlaeconfig.xml in HLAE application folder will have priority, otherwise the one in %APPDATA%\HLAE is used.
+</change>
+<change type="added">
+Custom loader now detects if paths are relative to HLAE folder and stores them accordingly, so that moving the folder doesn't break it (#200).
+</change>
+<change type="updated">
+Included AfxHookSource 1.65.0 (2019-08-03T10:56).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.75.7-installer</version>
+<time>2019-06-23T06:39Z</time>
+<changes>
+<change type="added">
+Added installer (based on https://wixtoolset.org) in order to solve issue #65 (Non-ASCII chracters in HLAE install location can cause problems).
+</change>
+<change type="updated">
+Changed config loading and saving behaviour:<br />
+First tries to load %APPDATA%\HLAE\hlaeconfig.xml, if that is not possible will try to load it from HLAE.exe folder.<br />
+Config will be saved to %APPDATA%\HLAE\hlaeconfig.xml.
+</change>
+</changes>
+</release>
+
+
 
 <release>
 <name>HLAE</name>

@@ -6,14 +6,18 @@ bool WideStringToUTF8String(wchar_t const * wideChars, std::string & outAnsiStri
 
 bool UTF8StringToWideString(char const * ansiChars, std::wstring & outWideString);
 
-/// <remarks>Not recommended, use UT8 whenerver possible.</remarks>
+/// <remarks>CS:GO console is UTF8, so you probably don't want these.</remarks>
 bool WideStringToAnsiString(wchar_t const * wideChars, std::string & outAnsiString);
 
-/// <remarks>Not recommended, use UT8 whenerver possible.</remarks>
+/// <remarks>CS:GO console is UTF8, so you probably don't want these.</remarks>
 bool AnsiStringToWideString(char const * ansiChars, std::wstring & outWideString);
 
 
 bool StringEndsWith(char const * target, char const * ending);
+
+/// <summary>Case insensitve StringBeginsWith</summary>
+bool StringIEndsWith(char const * target, char const * ending);
+
 bool StringEndsWithW(wchar_t const * target, wchar_t const * ending);
 
 bool StringBeginsWith(char const * target, char const * beginning);
