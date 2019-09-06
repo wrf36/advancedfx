@@ -10,14 +10,18 @@ using namespace Afx::BinUtils;
 
 //AFXADDR_DEF(csgo_CPredictionCopy_TransferData)
 //AFXADDR_DEF(csgo_CPredictionCopy_TransferData_DSZ)
+//AFXADDR_DEF(csgo_C_BaseEntity_IClientEntity_vtable)
+//AFXADDR_DEF(csgo_C_BaseAnimating_IClientEntity_vtable)
+//AFXADDR_DEF(csgo_C_BaseCombatWeapon_IClientEntity_vtable)
+AFXADDR_DEF(csgo_CStaticProp_IClientEntity_vtable)
 AFXADDR_DEF(csgo_C_BaseAnimating_vtable)
 AFXADDR_DEF(csgo_DT_Animationlayer_m_flCycle_fn)
 //AFXADDR_DEF(csgo_DT_Animationlayer_m_flPrevCycle_fn)
 //AFXADDR_DEF(csgo_mystique_animation)
 AFXADDR_DEF(csgo_C_BaseCombatWeapon_m_hWeaponWorldModel)
 AFXADDR_DEF(csgo_C_BaseCombatWeapon_m_iState)
-AFXADDR_DEF(csgo_C_BaseEntity_ToolRecordEnties)
-AFXADDR_DEF(csgo_C_BaseEntity_ToolRecordEnties_DSZ)
+//AFXADDR_DEF(csgo_C_BaseEntity_ToolRecordEnties)
+//AFXADDR_DEF(csgo_C_BaseEntity_ToolRecordEnties_DSZ)
 //AFXADDR_DEF(csgo_C_BasePlayer_OFS_m_bDucked)
 //AFXADDR_DEF(csgo_C_BasePlayer_OFS_m_bDucking)
 //AFXADDR_DEF(csgo_C_BasePlayer_OFS_m_flDuckAmount)
@@ -70,6 +74,8 @@ AFXADDR_DEF(csgo_CGameEventManger_FireEventIntern);
 AFXADDR_DEF(csgo_dynamic_cast);
 AFXADDR_DEF(csgo_RTTI_CGameEvent);
 AFXADDR_DEF(csgo_RTTI_IGameEvent);
+//AFXADDR_DEF(csgo_client_dynamic_cast);
+//AFXADDR_DEF(csgo_client_RTTI_IClientRenderable);
 
 void ErrorBox(char const * messageText);
 
@@ -151,7 +157,7 @@ void Addresses_InitShaderApiDll(AfxAddr shaderApiDll, SourceSdkVer sourceSdkVer)
 
 void Addresses_InitEngineDll(AfxAddr engineDll, SourceSdkVer sourceSdkVer)
 {
-	if(SourceSdkVer_CSGO == sourceSdkVer)
+	if (SourceSdkVer_CSGO == sourceSdkVer)
 	{
 		// csgo_snd_mix_timescale_patch: // Checked 2018-12-07.
 		{
@@ -159,33 +165,33 @@ void Addresses_InitEngineDll(AfxAddr engineDll, SourceSdkVer sourceSdkVer)
 			DWORD strAddr = 0;
 			{
 				ImageSectionsReader sections((HMODULE)engineDll);
-				if(!sections.Eof())
+				if (!sections.Eof())
 				{
 					sections.Next(); // skip .text
-					if(!sections.Eof())
+					if (!sections.Eof())
 					{
 						MemRange result = FindCString(sections.GetMemRange(), "Start profiling MIX_PaintChannels\n");
-						if(!result.IsEmpty())
+						if (!result.IsEmpty())
 						{
 							strAddr = result.Start;
 						}
-						else ErrorBox(MkErrStr(__FILE__,__LINE__));
+						else ErrorBox(MkErrStr(__FILE__, __LINE__));
 					}
-					else ErrorBox(MkErrStr(__FILE__,__LINE__));
+					else ErrorBox(MkErrStr(__FILE__, __LINE__));
 				}
-				else ErrorBox(MkErrStr(__FILE__,__LINE__));
+				else ErrorBox(MkErrStr(__FILE__, __LINE__));
 			}
-			if(strAddr)
+			if (strAddr)
 			{
 				ImageSectionsReader sections((HMODULE)engineDll);
-			
+
 				MemRange baseRange = sections.GetMemRange();
 				MemRange result = FindBytes(baseRange, (char const *)&strAddr, sizeof(strAddr));
-				if(!result.IsEmpty())
+				if (!result.IsEmpty())
 				{
-					DWORD tempAddr = result.Start +0xB9;
+					DWORD tempAddr = result.Start + 0xB9;
 
-					MemRange result = FindPatternString(MemRange(tempAddr-3, tempAddr-3+3), "51 52 E8");
+					MemRange result = FindPatternString(MemRange(tempAddr - 3, tempAddr - 3 + 3), "51 52 E8");
 					if (!result.IsEmpty())
 					{
 						tempAddr = tempAddr + 4 + *(DWORD *)tempAddr;
@@ -224,9 +230,9 @@ void Addresses_InitEngineDll(AfxAddr engineDll, SourceSdkVer sourceSdkVer)
 					}
 					else ErrorBox(MkErrStr(__FILE__, __LINE__));
 				}
-				else ErrorBox(MkErrStr(__FILE__,__LINE__));
+				else ErrorBox(MkErrStr(__FILE__, __LINE__));
 			}
-			if(addr)
+			if (addr)
 			{
 				AFXADDR_SET(csgo_snd_mix_timescale_patch, addr);
 			}
@@ -242,47 +248,47 @@ void Addresses_InitEngineDll(AfxAddr engineDll, SourceSdkVer sourceSdkVer)
 			DWORD strAddr = 0;
 			{
 				ImageSectionsReader sections((HMODULE)engineDll);
-				if(!sections.Eof())
+				if (!sections.Eof())
 				{
 					sections.Next(); // skip .text
-					if(!sections.Eof())
+					if (!sections.Eof())
 					{
 						MemRange result = FindCString(sections.GetMemRange(), "Starting sound '%s' while system disabled.\n");
-						if(!result.IsEmpty())
+						if (!result.IsEmpty())
 						{
 							strAddr = result.Start;
 						}
-						else ErrorBox(MkErrStr(__FILE__,__LINE__));
+						else ErrorBox(MkErrStr(__FILE__, __LINE__));
 					}
-					else ErrorBox(MkErrStr(__FILE__,__LINE__));
+					else ErrorBox(MkErrStr(__FILE__, __LINE__));
 				}
-				else ErrorBox(MkErrStr(__FILE__,__LINE__));
+				else ErrorBox(MkErrStr(__FILE__, __LINE__));
 			}
-			if(strAddr)
+			if (strAddr)
 			{
 				ImageSectionsReader sections((HMODULE)engineDll);
-			
+
 				MemRange baseRange = sections.GetMemRange();
 				MemRange result = FindBytes(baseRange, (char const *)&strAddr, sizeof(strAddr));
-				if(!result.IsEmpty())
+				if (!result.IsEmpty())
 				{
-					addr = result.Start -0x1d;
+					addr = result.Start - 0x1d;
 
 					// check for pattern to see if it is the right address:
 					unsigned char pattern[14] = { 0x8B, 0x01, 0x8D, 0x54, 0x24, 0x78, 0x68, 0x04, 0x01, 0x00, 0x00, 0x52, 0xFF, 0x10 };
 
-					DWORD patternSize = sizeof(pattern)/sizeof(pattern[0]);
-					MemRange patternRange(addr, addr+patternSize);
+					DWORD patternSize = sizeof(pattern) / sizeof(pattern[0]);
+					MemRange patternRange(addr, addr + patternSize);
 					MemRange result = FindBytes(patternRange, (char *)pattern, patternSize);
-					if(result.Start != patternRange.Start || result.End != patternRange.End)
+					if (result.Start != patternRange.Start || result.End != patternRange.End)
 					{
 						addr = 0;
-						ErrorBox(MkErrStr(__FILE__,__LINE__));
+						ErrorBox(MkErrStr(__FILE__, __LINE__));
 					}
 				}
-				else ErrorBox(MkErrStr(__FILE__,__LINE__));
+				else ErrorBox(MkErrStr(__FILE__, __LINE__));
 			}
-			if(addr)
+			if (addr)
 			{
 				AFXADDR_SET(csgo_S_StartSound_StringConversion, addr);
 			}
@@ -420,130 +426,133 @@ void Addresses_InitEngineDll(AfxAddr engineDll, SourceSdkVer sourceSdkVer)
 				else ErrorBox(MkErrStr(__FILE__, __LINE__));
 			}
 			AFXADDR_SET(csgo_CClientState_ProcessVoiceData, addr);
+		}
 
-			// csgo_CVoiceWriter_AddDecompressedData: // Checked 2017-09-21.
+		// csgo_CVoiceWriter_AddDecompressedData: // Checked 2017-09-21.
+		{
+			DWORD addr = 0;
 			{
-				DWORD addr = 0;
-				{
-					ImageSectionsReader sections((HMODULE)engineDll);
-					if (!sections.Eof())
-					{
-						MemRange textRange = sections.GetMemRange();
-						sections.Next(); // skip .text
-						if (!sections.Eof())
-						{
-							MemRange firstDataRange = sections.GetMemRange();
-
-							MemRange result = FindCString(sections.GetMemRange(), "Voice channel %d circular buffer overflow!\n");
-							if (!result.IsEmpty())
-							{
-								DWORD tmpAddr = result.Start;
-
-								result = FindBytes(textRange, (char const *)&tmpAddr, sizeof(tmpAddr));
-								if (!result.IsEmpty())
-								{
-									DWORD tmpAddr = result.Start;
-									tmpAddr -= 0x26;
-
-									result = FindPatternString(MemRange(tmpAddr - 0x1, tmpAddr - 0x1 + 0x5), "E8 ?? ?? ?? ??");
-									if (!result.IsEmpty())
-									{
-										addr = tmpAddr;
-										addr = addr + 4 + *(DWORD *)addr; // get CALL address
-									}
-									else ErrorBox(MkErrStr(__FILE__, __LINE__));
-								}
-								else ErrorBox(MkErrStr(__FILE__, __LINE__));
-							}
-							else ErrorBox(MkErrStr(__FILE__, __LINE__));
-						}
-						else ErrorBox(MkErrStr(__FILE__, __LINE__));
-					}
-					else ErrorBox(MkErrStr(__FILE__, __LINE__));
-				}
-				AFXADDR_SET(csgo_CVoiceWriter_AddDecompressedData, addr);
-			}
-
-			// csgo_engine_RegisterForUnhandledEvent_ToggleDebugger_BeforeCall: // Checked 2018-07-14. // TODO
-			{
-				DWORD addr = 0;
-				{
-					/*
-					ImageSectionsReader sections((HMODULE)engineDll);
-					if (!sections.Eof())
-					{
-						MemRange textRange = sections.GetMemRange();
-						sections.Next(); // skip .text
-						if (!sections.Eof())
-						{
-							MemRange firstDataRange = sections.GetMemRange();
-
-							MemRange result = FindCString(sections.GetMemRange(), "ToggleDebugger");
-							if (!result.IsEmpty())
-							{
-								DWORD tmpAddr = result.Start;
-
-								result = FindBytes(textRange, (char const *)&tmpAddr, sizeof(tmpAddr));
-								if (!result.IsEmpty())
-								{
-									DWORD tmpAddr = result.Start;
-									tmpAddr += 0x26;
-
-									result = FindPatternString(MemRange(tmpAddr, tmpAddr + 0x6), "FF 90 B8 00 00  00");
-									if (!result.IsEmpty())
-									{
-										addr = tmpAddr;
-									}
-									else ErrorBox(MkErrStr(__FILE__, __LINE__));
-								}
-								else ErrorBox(MkErrStr(__FILE__, __LINE__));
-							}
-							else ErrorBox(MkErrStr(__FILE__, __LINE__));
-						}
-						else ErrorBox(MkErrStr(__FILE__, __LINE__));
-					}
-					else ErrorBox(MkErrStr(__FILE__, __LINE__));
-					*/
-				}
-				AFXADDR_SET(csgo_engine_RegisterForUnhandledEvent_ToggleDebugger_BeforeCall, addr);
-			}
-
-			// csgo_CGameEventManger_FireEventIntern:
-				//
-				//
-			{
-				AFXADDR_SET(csgo_CGameEventManger_FireEventIntern, 0);
-				AFXADDR_SET(csgo_dynamic_cast, 0);
-				AFXADDR_SET(csgo_RTTI_CGameEvent, 0);
-				AFXADDR_SET(csgo_RTTI_IGameEvent, 0);
-
 				ImageSectionsReader sections((HMODULE)engineDll);
 				if (!sections.Eof())
 				{
 					MemRange textRange = sections.GetMemRange();
-
-					MemRange result = FindPatternString(textRange, "55 8B EC 83 E4 F8 83 EC 0C 53 8B D9 56 57 89 5C 24 0C 8D B3 9C 00 00 00 89 74 24 14 FF 15 ?? ?? ?? ??");
-
-					if (!result.IsEmpty())
+					sections.Next(); // skip .text
+					if (!sections.Eof())
 					{
-						AFXADDR_SET(csgo_CGameEventManger_FireEventIntern, result.Start);
+						MemRange firstDataRange = sections.GetMemRange();
 
-						result = FindPatternString(MemRange(result.Start, result.Start + 0x25C).And(textRange), "6A 00 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 6A 00 57 E8 ?? ?? ?? ??");
-
+						MemRange result = FindCString(sections.GetMemRange(), "Voice channel %d circular buffer overflow!\n");
 						if (!result.IsEmpty())
 						{
-							AFXADDR_SET(csgo_RTTI_CGameEvent, *(DWORD *)(result.Start + 3));
-							AFXADDR_SET(csgo_RTTI_IGameEvent, *(DWORD *)(result.Start + 8));
-							AFXADDR_SET(csgo_dynamic_cast, *(DWORD *)(result.Start + 16) + result.Start + 16 + 4);
+							DWORD tmpAddr = result.Start;
+
+							result = FindBytes(textRange, (char const *)&tmpAddr, sizeof(tmpAddr));
+							if (!result.IsEmpty())
+							{
+								DWORD tmpAddr = result.Start;
+								tmpAddr -= 0x26;
+
+								result = FindPatternString(MemRange(tmpAddr - 0x1, tmpAddr - 0x1 + 0x5), "E8 ?? ?? ?? ??");
+								if (!result.IsEmpty())
+								{
+									addr = tmpAddr;
+									addr = addr + 4 + *(DWORD *)addr; // get CALL address
+								}
+								else ErrorBox(MkErrStr(__FILE__, __LINE__));
+							}
+							else ErrorBox(MkErrStr(__FILE__, __LINE__));
 						}
 						else ErrorBox(MkErrStr(__FILE__, __LINE__));
 					}
 					else ErrorBox(MkErrStr(__FILE__, __LINE__));
 				}
 				else ErrorBox(MkErrStr(__FILE__, __LINE__));
-
 			}
+			AFXADDR_SET(csgo_CVoiceWriter_AddDecompressedData, addr);
 		}
+
+		// csgo_engine_RegisterForUnhandledEvent_ToggleDebugger_BeforeCall: // Checked 2018-07-14. // TODO
+		{
+			DWORD addr = 0;
+			{
+				/*
+				ImageSectionsReader sections((HMODULE)engineDll);
+				if (!sections.Eof())
+				{
+					MemRange textRange = sections.GetMemRange();
+					sections.Next(); // skip .text
+					if (!sections.Eof())
+					{
+						MemRange firstDataRange = sections.GetMemRange();
+
+						MemRange result = FindCString(sections.GetMemRange(), "ToggleDebugger");
+						if (!result.IsEmpty())
+						{
+							DWORD tmpAddr = result.Start;
+
+							result = FindBytes(textRange, (char const *)&tmpAddr, sizeof(tmpAddr));
+							if (!result.IsEmpty())
+							{
+								DWORD tmpAddr = result.Start;
+								tmpAddr += 0x26;
+
+								result = FindPatternString(MemRange(tmpAddr, tmpAddr + 0x6), "FF 90 B8 00 00  00");
+								if (!result.IsEmpty())
+								{
+									addr = tmpAddr;
+								}
+								else ErrorBox(MkErrStr(__FILE__, __LINE__));
+							}
+							else ErrorBox(MkErrStr(__FILE__, __LINE__));
+						}
+						else ErrorBox(MkErrStr(__FILE__, __LINE__));
+					}
+					else ErrorBox(MkErrStr(__FILE__, __LINE__));
+				}
+				else ErrorBox(MkErrStr(__FILE__, __LINE__));
+				*/
+			}
+			AFXADDR_SET(csgo_engine_RegisterForUnhandledEvent_ToggleDebugger_BeforeCall, addr);
+		}
+
+		// csgo_CGameEventManger_FireEventIntern:
+			//
+			//
+		{
+			AFXADDR_SET(csgo_CGameEventManger_FireEventIntern, 0);
+			AFXADDR_SET(csgo_dynamic_cast, 0);
+			AFXADDR_SET(csgo_RTTI_CGameEvent, 0);
+			AFXADDR_SET(csgo_RTTI_IGameEvent, 0);
+
+			ImageSectionsReader sections((HMODULE)engineDll);
+			if (!sections.Eof())
+			{
+				MemRange textRange = sections.GetMemRange();
+
+				MemRange result = FindPatternString(textRange, "55 8B EC 83 E4 F8 83 EC 0C 53 8B D9 56 57 89 5C 24 0C 8D B3 9C 00 00 00 89 74 24 14 FF 15 ?? ?? ?? ??");
+
+				if (!result.IsEmpty())
+				{
+					AFXADDR_SET(csgo_CGameEventManger_FireEventIntern, result.Start);
+
+					result = FindPatternString(MemRange(result.Start, result.Start + 0x25C).And(textRange), "6A 00 68 ?? ?? ?? ?? 68 ?? ?? ?? ?? 6A 00 57 E8 ?? ?? ?? ??");
+
+					if (!result.IsEmpty())
+					{
+						AFXADDR_SET(csgo_RTTI_CGameEvent, *(DWORD *)(result.Start + 3));
+						AFXADDR_SET(csgo_RTTI_IGameEvent, *(DWORD *)(result.Start + 8));
+						AFXADDR_SET(csgo_dynamic_cast, *(DWORD *)(result.Start + 16) + result.Start + 16 + 4);
+					}
+					else ErrorBox(MkErrStr(__FILE__, __LINE__));
+				}
+				else ErrorBox(MkErrStr(__FILE__, __LINE__));
+			}
+			else ErrorBox(MkErrStr(__FILE__, __LINE__));
+		}
+
+		// csgo_C_BaseEntity_IClientEntity_vtable // Checked 2019-08-24.
+		AFXADDR_SET(csgo_CStaticProp_IClientEntity_vtable, FindClassVtable((HMODULE)engineDll, ".?AVCStaticProp@@", 0, 0x4));
+		if (!AFXADDR_GET(csgo_CStaticProp_IClientEntity_vtable)) ErrorBox(MkErrStr(__FILE__, __LINE__));
 	}
 	else
 	{
@@ -558,6 +567,7 @@ void Addresses_InitEngineDll(AfxAddr engineDll, SourceSdkVer sourceSdkVer)
 		AFXADDR_SET(csgo_dynamic_cast, 0);
 		AFXADDR_SET(csgo_RTTI_CGameEvent, 0);
 		AFXADDR_SET(csgo_RTTI_IGameEvent, 0);
+		AFXADDR_SET(csgo_CStaticProp_IClientEntity_vtable, 0x0);
 	}
 	AFXADDR_SET(csgo_snd_mix_timescale_patch_DSZ, 0x08);
 	AFXADDR_SET(csgo_MIX_PaintChannels_DSZ, 0x9);
@@ -1203,6 +1213,7 @@ void Addresses_InitClientDll(AfxAddr clientDll, SourceSdkVer sourceSdkVer)
 		}
 
 		// csgo_C_BaseEntity_ToolRecordEnties: // Checked 2017-05-13.
+		/*
 		{
 			DWORD addr = 0;
 			DWORD strAddr = 0;
@@ -1250,6 +1261,7 @@ void Addresses_InitClientDll(AfxAddr clientDll, SourceSdkVer sourceSdkVer)
 
 			AFXADDR_SET(csgo_C_BaseEntity_ToolRecordEnties, addr);
 		}
+		*/
 
 		// csgo_C_BasePlayer_RecvProxy_ObserverTarget: // Fixed 2017-08-18. // TODO
 		{
@@ -1495,9 +1507,21 @@ void Addresses_InitClientDll(AfxAddr clientDll, SourceSdkVer sourceSdkVer)
 		AFXADDR_SET(csgo_CCSGameMovement_vtable, FindClassVtable((HMODULE)clientDll, ".?AVCCSGameMovement@@", 0, 0x0));
 		if (!AFXADDR_GET(csgo_CCSGameMovement_vtable)) ErrorBox(MkErrStr(__FILE__, __LINE__));
 
+		// csgo_C_BaseEntity_IClientEntity_vtable // Checked 2019-08-24.
+		//AFXADDR_SET(csgo_C_BaseEntity_IClientEntity_vtable, FindClassVtable((HMODULE)clientDll, ".?AVC_BaseEntity@@", 0, 0x4));
+		//if (!AFXADDR_GET(csgo_C_BaseEntity_IClientEntity_vtable)) ErrorBox(MkErrStr(__FILE__, __LINE__));
+
 		// csgo_C_BaseAnimating_vtable // Checked 2018-08-03.
 		AFXADDR_SET(csgo_C_BaseAnimating_vtable, FindClassVtable((HMODULE)clientDll, ".?AVC_BaseAnimating@@", 0, 0x0));
 		if (!AFXADDR_GET(csgo_C_BaseAnimating_vtable)) ErrorBox(MkErrStr(__FILE__, __LINE__));
+
+		// csgo_C_BaseAnimating_IClientEntity_vtable // Checked 2019-08-31.
+		//AFXADDR_SET(csgo_C_BaseAnimating_IClientEntity_vtable, FindClassVtable((HMODULE)clientDll, ".?AVC_BaseAnimating@@", 0, 0x4));
+		//if (!AFXADDR_GET(csgo_C_BaseAnimating_IClientEntity_vtable)) ErrorBox(MkErrStr(__FILE__, __LINE__));
+
+		// csgo_C_BaseCombatWeapon_IClientEntity_vtable // Checked 2019-08-31.
+		//AFXADDR_SET(csgo_C_BaseCombatWeapon_IClientEntity_vtable, FindClassVtable((HMODULE)clientDll, ".?AVC_BaseCombatWeapon@@", 0, 0x4));
+		//if (!AFXADDR_GET(csgo_C_BaseCombatWeapon_IClientEntity_vtable)) ErrorBox(MkErrStr(__FILE__, __LINE__));
 
 		// csgo_CGlowOverlay_Destructor, csgo_CGlowOverlay_Draw:
 		{
@@ -1638,16 +1662,84 @@ void Addresses_InitClientDll(AfxAddr clientDll, SourceSdkVer sourceSdkVer)
 
 			AFXADDR_SET(csgo_CRendering3dView_DrawTranslucentRenderables, addr);
 		}
+
+		/*
+		// client dynamic_cast // Checked 2019-08-28
+		//
+		{
+			DWORD addr = 0;
+
+			ImageSectionsReader sections((HMODULE)clientDll);
+			if (!sections.Eof())
+			{
+				MemRange textRange = sections.GetMemRange();
+
+				MemRange result = FindPatternString(textRange, "6A 18 68 ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B 7D 08 85 FF 75 08 33 C0 E8 ?? ?? ?? ?? C3");
+
+				if (!result.IsEmpty())
+					addr = result.Start;
+				else
+					ErrorBox(MkErrStr(__FILE__, __LINE__));
+			}
+			else ErrorBox(MkErrStr(__FILE__, __LINE__));
+
+			AFXADDR_SET(csgo_client_dynamic_cast, addr);
+		}
+
+		// RTTI_IClientRenderable  // Checked 2019-08-28
+		//
+		{
+			DWORD addr = 0;
+
+			ImageSectionsReader imageSectionReader((HMODULE)clientDll);
+
+			if (!imageSectionReader.Eof())
+			{
+
+				imageSectionReader.Next();
+
+				MemRange data2Range = imageSectionReader.GetMemRange();
+
+				if (!imageSectionReader.Eof())
+				{
+
+					imageSectionReader.Next();
+
+					MemRange data3Range = imageSectionReader.GetMemRange();
+
+					MemRange rangeName = FindCString(data3Range, ".?AVIClientRenderable@@");
+
+					if (!rangeName.IsEmpty())
+					{
+						MemRange rangeRttiTypeDescriptor = data3Range.And(MemRange::FromSize((DWORD)(rangeName.Start - 0x8), (DWORD)sizeof(DWORD)));
+
+						if (!rangeRttiTypeDescriptor.IsEmpty())
+						{
+							addr = rangeRttiTypeDescriptor.Start;
+						}
+					}
+					else ErrorBox(MkErrStr(__FILE__, __LINE__));
+				}
+				else ErrorBox(MkErrStr(__FILE__, __LINE__));
+			}
+			else ErrorBox(MkErrStr(__FILE__, __LINE__));
+
+			AFXADDR_SET(csgo_client_RTTI_IClientRenderable, addr);
+		}
+		*/
 	}
 	else
 	{
 		//AFXADDR_SET(csgo_CPredictionCopy_TransferData, 0x0);
+		//AFXADDR_SET(csgo_C_BaseEntity_IClientEntity_vtable, 0x0);
+		//AFXADDR_SET(csgo_C_BaseAnimating_IClientEntity_vtable, 0x0);
 		AFXADDR_SET(csgo_C_BaseAnimating_vtable, 0x0);
+		//AFXADDR_SET(csgo_C_BaseCombatWeapon_IClientEntity_vtable, 0x0);
 		AFXADDR_SET(csgo_DT_Animationlayer_m_flCycle_fn, 0x0);
 		//AFXADDR_SET(csgo_DT_Animationlayer_m_flPrevCycle_fn, 0x0);
 		AFXADDR_SET(csgo_C_BaseCombatWeapon_m_hWeaponWorldModel, -1);
 		AFXADDR_SET(csgo_C_BaseCombatWeapon_m_iState, -1);
-		AFXADDR_SET(csgo_C_BaseEntity_ToolRecordEnties, 0x0);
+		//AFXADDR_SET(csgo_C_BaseEntity_ToolRecordEnties, 0x0);
 		//AFXADDR_SET(csgo_C_BasePlayer_OFS_m_bDucked, (AfxAddr)-1);
 		//AFXADDR_SET(csgo_C_BasePlayer_OFS_m_bDucking, (AfxAddr)-1);
 		AFXADDR_SET(csgo_C_BasePlayer_OFS_m_skybox3d_scale, (AfxAddr)-1);
@@ -1670,10 +1762,12 @@ void Addresses_InitClientDll(AfxAddr clientDll, SourceSdkVer sourceSdkVer)
 		AFXADDR_SET(csgo_Unknown_GetTeamsSwappedOnScreen, 0x0);
 		AFXADDR_SET(csgo_C_CSPlayer_IClientNetworkable_entindex, 0x0);
 		AFXADDR_SET(csgo_CRendering3dView_DrawTranslucentRenderables, 0x0);
+		//AFXADDR_SET(csgo_client_dynamic_cast, 0x0);
+		//AFXADDR_SET(csgo_client_RTTI_IClientRenderable, 0x0);
 	}
 
 	//AFXADDR_SET(csgo_CPredictionCopy_TransferData_DSZ, 0x0a);
-	AFXADDR_SET(csgo_C_BaseEntity_ToolRecordEnties_DSZ, 0xd);
+	//AFXADDR_SET(csgo_C_BaseEntity_ToolRecordEnties_DSZ, 0xd);
 	AFXADDR_SET(csgo_CGlowOverlay_Draw_DSZ, 0xc);
 	AFXADDR_SET(csgo_CSkyboxView_Draw_DSZ, 0x0a);
 	AFXADDR_SET(csgo_gpGlobals_OFS_curtime, 4*4);

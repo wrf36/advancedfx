@@ -6,11 +6,29 @@
 
 <release>
 <name>AfxHookSource</name>
+<version>1.69.1</version>
+<time>2019-08-29T06:32Z</time>
+<changes>
+<change type="fixed">
+Fixed bug that would cause HLAE to lock up in an infinite loop when the first stream wouldn't be set to be recorded when starting to record. Thanks to grossmeister edits for reporting the issue (https://www.youtube.com/channel/UCKvcFw-wI5R3eGnqB5uQXZQ).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
 <version>1.69.0</version>
 <time>2019-08-29T06:32Z</time>
 <changes>
 <change type="fixed">
 Adjusted to CS:GO 08/28/2019 update.
+</change>
+<change type="added">
+Extended understanding of mirv_streams for entities: You can now detect way more entities in a baseFx based stream.
+</change>
+<change type="added">
+Added a few new mirv_calcs to support other features.
 </change>
 <change type="added">
 Added #155 Visualize Camera orientation on campath preview.<br />
@@ -22,6 +40,7 @@ Fixed #134 DirectSound-based drivers without XAudio2 support don't work.
 </change>
 </changes>
 </release>
+
 
 <release>
 <name>AfxHookSource</name>
@@ -58,7 +77,6 @@ Made game .exe detection case-insensitive.
 </change>
 </changes>
 </release>
-
 
 
 <release>

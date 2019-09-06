@@ -14,6 +14,7 @@
 #include "AfxOutStreams.h"
 #include "AfxWriteFileLimiter.h"
 #include "AfxThreadedRefCounted.h"
+#include "MirvCalcs.h"
 
 #define AFX_SHADERS_CSGO 0
 
@@ -60,6 +61,8 @@ public:
 	// Stream settings info
 
 	virtual bool ViewRenderShouldForceNoVis(bool orgValue) = 0;
+
+	virtual void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable) = 0;
 
 	//
 	// General state:
@@ -473,6 +476,18 @@ public:
 	CAfxBoolOverrideable CullFrontFaces;
 	CAfxBoolOverrideable RenderFlashlightDepthTranslucents;
 
+	//bool GetDisableFastPath()
+	//{
+	//	return m_DisableFastPath;
+	//}
+
+	//void SetDisableFastPath(bool value)
+	//{
+	//	m_DisableFastPath = value;
+	//}
+
+	//void Console_DisableFastPathRequired();
+
 	virtual void LevelShutdown(void)
 	{
 	}
@@ -496,6 +511,8 @@ protected:
 	bool m_ForceBuildingCubemaps = false;
 	StreamCaptureType m_StreamCaptureType;
 	bool m_DrawingSkyBox;
+	//bool m_DisableFastPath = false;
+
 
 	virtual ~CAfxRenderViewStream();
 
@@ -1031,6 +1048,28 @@ class CAfxBaseFxStream
 : public CAfxRenderViewStream
 {
 public:
+	struct CEntityInfo
+	{
+		SOURCESDK::CSGO::CBaseHandle Handle;
+
+		bool operator== (const CEntityInfo &y) const
+		{
+			return Handle == y.Handle;
+		}
+
+		bool operator!= (const CEntityInfo &y) const
+		{
+			return Handle != y.Handle;
+		}
+
+		bool operator< (const CEntityInfo & y) const
+		{
+			return Handle < y.Handle;
+		}
+
+
+	};
+
 	class CActionKey
 	{
 	public:
@@ -1202,6 +1241,8 @@ public:
 
 	virtual void OnRenderEnd(void) override;
 
+	void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable);
+
 	void Console_ActionFilter_Add(const char * expression, CAction * action);
 	void Console_ActionFilter_AddEx(CAfxStreams * streams, IWrpCommandArgs * args);
 	void Console_ActionFilter_Print(void);
@@ -1213,7 +1254,7 @@ public:
 
 	virtual void LevelShutdown(void);
 
-	CAction * RetrieveAction(CAfxTrackedMaterial * tackedMaterial, SOURCESDK::CSGO::CBaseHandle const & entityHandle);
+	CAction * RetrieveAction(CAfxTrackedMaterial * tackedMaterial, const CEntityInfo & currentEntity);
 
 	CAction * ClientEffectTexturesAction_get(void);
 	void ClientEffectTexturesAction_set(CAction * value);
@@ -1930,7 +1971,7 @@ private:
 
 		CActionFilterValue(
 			bool useHandle,
-			SOURCESDK::CSGO::CBaseHandle const & handle,
+			SOURCESDK::CSGO::CBaseHandle handle,
 			char const * name,
 			char const * textureGroupName,
 			char const * shaderName,
@@ -2004,7 +2045,7 @@ private:
 				handleStr = std::to_string(m_Handle.ToInt());
 			}
 
-			Tier0_Msg("id=%i, \"handle=%s\", \"name=%s\", \"textureGroup=%s\", \"shader=%s\", \"isErrrorMaterial=%s\", \"action=%s\"\n",
+			Tier0_Msg("id=%i, \"handle=%s\",\"name=%s\", \"textureGroup=%s\", \"shader=%s\", \"isErrrorMaterial=%s\", \"action=%s\"\n",
 				id,
 				handleStr.c_str(),
 				m_Name.c_str(),
@@ -2020,21 +2061,19 @@ private:
 			return m_MatchAction;
 		}
 
-		bool GetUseHandle(void)
+		bool GetUseEntity(void)
 		{
 			return m_UseHandle;
 		}
 
-		SOURCESDK::CSGO::CBaseHandle const & GetHandle(void)
-		{
-			return m_Handle;
-		}
-
 		bool CalcMatch_Material(CAfxTrackedMaterial * trackedMaterial);
+
+		bool CalcMatch_Entity(const CEntityInfo & info);
 
 	private:
 		bool m_UseHandle;
 		SOURCESDK::CSGO::CBaseHandle m_Handle;
+		std::string m_ClassName;
 		std::string m_Name;
 		std::string m_TextureGroupName;
 		std::string m_ShaderName;
@@ -2084,6 +2123,8 @@ private:
 
 		virtual bool ViewRenderShouldForceNoVis(bool orgValue);
 
+		virtual void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable) override;
+
 		virtual void DrawingHudBegin(void);
 
 		virtual void DrawingHudEnd(void);
@@ -2115,7 +2156,8 @@ private:
 	private:
 		bool m_DrawingHud;
 		bool m_DrawingSkyBoxView;
-		SOURCESDK::CSGO::CBaseHandle m_CurrentEntityHandle;
+
+		CEntityInfo m_CurrentEntity;
 
 		class CQueueBeginFunctor
 			: public CAfxFunctor
@@ -2223,20 +2265,20 @@ private:
 			: public CAfxFunctor
 		{
 		public:
-			CUpdateCurrentEnitityHandleFunctor(CAfxBaseFxStreamContext * streamContext, SOURCESDK::CSGO::CBaseHandle handle)
+			CUpdateCurrentEnitityHandleFunctor(CAfxBaseFxStreamContext * streamContext, const CEntityInfo & currentEntity)
 				: m_StreamContext(streamContext)
-				, m_Handle(handle)
+				, m_CurrentEntity(currentEntity)
 			{
 			}
 
 			virtual void operator()()
 			{
-				m_StreamContext->UpdateCurrentEntityHandle(m_Handle);
+				m_StreamContext->UpdateCurrentEntity(m_CurrentEntity);
 			}
 
 		private:
 			CAfxBaseFxStreamContext * m_StreamContext;
-			SOURCESDK::CSGO::CBaseHandle m_Handle;
+			CEntityInfo m_CurrentEntity;
 		};
 
 		CAfxBaseFxStream * m_Stream;
@@ -2268,12 +2310,12 @@ private:
 			m_CurrentAction = action;
 		}
 
-		bool IfRootThenUpdateCurrentEntityHandle();
+		bool IfRootThenUpdateCurrentEntity();
 
-		void UpdateCurrentEntityHandle(SOURCESDK::CSGO::CBaseHandle handle);
+		void UpdateCurrentEntity(const CEntityInfo & currentEntity);
 	};
 
-	CAfxBaseFxStreamContext * m_ActiveStreamContext;
+	CAfxBaseFxStreamContext * m_ActiveStreamContext = nullptr;
 
 	bool m_DebugPrint;
 	struct CCacheEntry
@@ -2373,9 +2415,9 @@ private:
 	struct CPickerMatValue
 	{
 		int Index;
-		std::set<int> Entities;
+		std::set<CEntityInfo> Entities;
 
-		CPickerMatValue(int index, int entity)
+		CPickerMatValue(int index, const CEntityInfo & entity)
 		{
 			Index = index;
 			Entities.insert(entity);
@@ -2417,7 +2459,7 @@ private:
 
 	} * m_PickerMaterialsRleaseNotification;
 
-	std::map<int, CPickerEntValue> m_PickerEntities;
+	std::map<CEntityInfo, CPickerEntValue> m_PickerEntities;
 	bool m_PickingEntities;
 	bool m_PickerEntitiesAlerted;
 
@@ -2434,7 +2476,7 @@ private:
 	void ConvertDepthAction(CAction * & action, bool to24);
 	*/
 
-	bool Picker_GetHidden(SOURCESDK::CSGO::CBaseHandle const & entityHandle, CAfxTrackedMaterial * material);
+	bool Picker_GetHidden(CAfxTrackedMaterial * tackedMaterial, const CEntityInfo & currentEntity);
 };
 
 class __declspec(novtable) IAfxBasefxStreamModifier abstract
@@ -2981,6 +3023,8 @@ public:
 	bool DrawPhiGrid = false;
 	bool DrawRuleOfThirds = false;
 
+	virtual void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable);
+
 private:
 	enum MainStreamMode_e
 	{
@@ -3101,6 +3145,18 @@ private:
 	WrpConVarRef * m_PanoramaDisableLayerCache = nullptr;
 	int m_OldPanoramaDisableLayerCache;
 
+	//WrpConVarRef * m_cl_modelfastpath = nullptr;
+	//int m_Old_cl_modelfastpath;
+
+	//WrpConVarRef * m_cl_tlucfastpath = nullptr;
+	//int m_Old_cl_tlucfastpath;
+
+	//WrpConVarRef * m_cl_brushfastpath = nullptr;
+	int m_Old_cl_brushfastpath;
+
+	//WrpConVarRef * m_r_drawstaticprops = nullptr;
+	//int m_Old_r_drawstaticprops;
+
 	std::wstring m_TakeDir;
 	//ITexture_csgo * m_RgbaRenderTarget;
 	SOURCESDK::ITexture_csgo * m_RenderTargetDepthF;
@@ -3128,6 +3184,9 @@ private:
 	void SetMatVarsForStreams();
 	void RestoreMatVars();
 	void EnsureMatVars();
+
+	//void DisableFastPath();
+	//void RestoreFastPath();
 
 	void AddStream(CAfxRecordStream * stream);
 
