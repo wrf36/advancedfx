@@ -49,12 +49,15 @@
 #include <swarm/sdk_src/public/tier1/convar.h>
 #include <l4d2/sdk_src/public/tier0/memalloc.h>
 #include <l4d2/sdk_src/public/tier1/convar.h>
+#include <bm/sdk_src/public/tier0/memalloc.h>
+#include <bm/sdk_src/public/tier1/convar.h>
+#include <bm/sdk_src/public/cdll_int.h>
 #include <csgo/Panorama.h>
-#include <csgo/hooks/engine.h>
 //#include <csgo/hooks/studiorender.h>
 #include <insurgency2/public/cdll_int.h>
 #include "MirvTime.h"
 #include "csgo_CRendering3dView.h"
+//#include "csgo_CDemoFile.h"
 
 #include <Windows.h>
 #include <shared/Detours/src/detours.h>
@@ -77,6 +80,10 @@ SOURCESDK::SWARM::ICvar * SOURCESDK::SWARM::g_pCVar = 0;
 SOURCESDK::L4D2::IMemAlloc *SOURCESDK::L4D2::g_pMemAlloc = 0;
 SOURCESDK::L4D2::ICvar * SOURCESDK::L4D2::cvar = 0;
 SOURCESDK::L4D2::ICvar * SOURCESDK::L4D2::g_pCVar = 0;
+
+SOURCESDK::BM::IMemAlloc *SOURCESDK::BM::g_pMemAlloc = 0;
+SOURCESDK::BM::ICvar * SOURCESDK::BM::cvar = 0;
+SOURCESDK::BM::ICvar * SOURCESDK::BM::g_pCVar = 0;
 
 
 void ErrorBox(char const * messageText) {
@@ -231,79 +238,110 @@ void MySetup(SOURCESDK::CreateInterfaceFn appSystemFactory, WrpGlobals *pGlobals
 
 		// VEngineClient:
 
-		if (SourceSdkVer_CSGO != g_SourceSdkVer && (iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_015, NULL)))
+		switch (g_SourceSdkVer)
 		{
-			// This is not really 100% backward compatible, there is a problem with the CVAR interface or s.th..
-			// But the guy that tested it wasn't available for further debugging, so I'll just leave it as
-			// it is now. Will crash as soon as i.e. ExecuteCliendCmd is used, due to some crash
-			// related to CVAR system.
-			
-			g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_015;
-			g_VEngineClient = new WrpVEngineClient_013((SOURCESDK::IVEngineClient_013 *)iface);
+		case SourceSdkVer_CSGO:
+			if (iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_014_CSGO, NULL))
+			{
+				g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_014_CSGO " (CS:GO)";
+				g_VEngineClient = new WrpVEngineClient_014_csgo((SOURCESDK::IVEngineClient_014_csgo*)iface);
+			}
+			break;
+		case SourceSdkVer_BM:
+			if (iface = appSystemFactory(SOURCESDK_BM_VENGINE_CLIENT_INTERFACE_VERSION, NULL))
+			{
+				g_Info_VEngineClient = SOURCESDK_BM_VENGINE_CLIENT_INTERFACE_VERSION " (Black Mesa)";
+				g_VEngineClient = new WrpVEngineClient_bm((SOURCESDK::BM::IVEngineClient*)iface);
+			}
+			break;
+		case SourceSdkVer_Insurgency2:
+			if (iface = appSystemFactory(SOURCESDK_INSURGENCY2_VENGINE_CLIENT_INTERFACE_VERSION, NULL))
+			{
+				g_Info_VEngineClient = SOURCESDK_INSURGENCY2_VENGINE_CLIENT_INTERFACE_VERSION " (Insurgency 2)";
+				g_VEngineClient = new WrpVEngineClient_Insurgency2((SOURCESDK::INSURGENCY2::IVEngineClient*)iface);
+			}
+			break;
+		default:
+			if (iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_015, NULL))
+			{
+				// This is not really 100% backward compatible, there is a problem with the CVAR interface or s.th..
+				// But the guy that tested it wasn't available for further debugging, so I'll just leave it as
+				// it is now. Will crash as soon as i.e. ExecuteCliendCmd is used, due to some crash
+				// related to CVAR system.
+
+				g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_015;
+				g_VEngineClient = new WrpVEngineClient_013((SOURCESDK::IVEngineClient_013*)iface);
+			}
+			else if (iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_013, NULL))
+			{
+				g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_013;
+				g_VEngineClient = new WrpVEngineClient_013((SOURCESDK::IVEngineClient_013*)iface);
+			}
+			else if (iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_012, NULL)) {
+				g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_012;
+				g_VEngineClient = new WrpVEngineClient_012((SOURCESDK::IVEngineClient_012*)iface);
+			}
+			break;
 		}
-		else if (SourceSdkVer_Insurgency2 == g_SourceSdkVer && (iface = appSystemFactory(SOURCESDK_INSURGENCY2_VENGINE_CLIENT_INTERFACE_VERSION, NULL)))
-		{		
-			g_Info_VEngineClient = SOURCESDK_INSURGENCY2_VENGINE_CLIENT_INTERFACE_VERSION " (Insurgency 2)";
-			g_VEngineClient = new WrpVEngineClient_Insurgency2((SOURCESDK::INSURGENCY2::IVEngineClient *)iface);
-		}
-		else
-		if(SourceSdkVer_CSGO == g_SourceSdkVer && (iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_014_CSGO, NULL)))
-		{
-			g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_014_CSGO " (CS:GO)";
-			g_VEngineClient = new WrpVEngineClient_014_csgo((SOURCESDK::IVEngineClient_014_csgo *)iface);
-		}
-		else
-		if(iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_013, NULL))
-		{
-			g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_013;
-			g_VEngineClient = new WrpVEngineClient_013((SOURCESDK::IVEngineClient_013 *)iface);
-		}
-		else if(iface = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_012, NULL)) {
-			g_Info_VEngineClient = VENGINE_CLIENT_INTERFACE_VERSION_012;
-			g_VEngineClient = new WrpVEngineClient_012((SOURCESDK::IVEngineClient_012 *)iface);
-		}
-		else {
-			ErrorBox("Could not get a supported VEngineClient interface.");
-		}
+		if (nullptr == iface) ErrorBox("Could not get a supported VEngineClient interface.");
 
 		// VEngineCvar:
 
-		if((SourceSdkVer_CSGO == g_SourceSdkVer || SourceSdkVer_Insurgency2 == g_SourceSdkVer) && (iface = appSystemFactory( SOURCESDK_CSGO_CVAR_INTERFACE_VERSION, NULL )))
+		switch (g_SourceSdkVer)
 		{
-			g_Info_VEngineCvar = SOURCESDK_CSGO_CVAR_INTERFACE_VERSION " (CS:GO)";
-			SOURCESDK::CSGO::g_pCVar = SOURCESDK::CSGO::cvar = (SOURCESDK::CSGO::ICvar *)iface;
+		case SourceSdkVer_CSGO:
+		case SourceSdkVer_Insurgency2:
+			if (iface = appSystemFactory(SOURCESDK_CSGO_CVAR_INTERFACE_VERSION, NULL))
+			{
+				g_Info_VEngineCvar = SOURCESDK_CSGO_CVAR_INTERFACE_VERSION " (CS:GO)";
+				SOURCESDK::CSGO::g_pCVar = SOURCESDK::CSGO::cvar = (SOURCESDK::CSGO::ICvar*)iface;
 
-			WrpConCommands::RegisterCommands(SOURCESDK::CSGO::g_pCVar);
-		}
-		else if((SourceSdkVer_SWARM == g_SourceSdkVer) && (iface = appSystemFactory(SOURCESDK_SWARM_CVAR_INTERFACE_VERSION, NULL)))
-		{
-			g_Info_VEngineCvar = SOURCESDK_SWARM_CVAR_INTERFACE_VERSION " (Alien Swarm)";
-			SOURCESDK::SWARM::g_pCVar = SOURCESDK::SWARM::cvar = (SOURCESDK::SWARM::ICvar *)iface;
+				WrpConCommands::RegisterCommands(SOURCESDK::CSGO::g_pCVar);
+			}
+			break;
+		case SourceSdkVer_SWARM:
+			if (iface = appSystemFactory(SOURCESDK_SWARM_CVAR_INTERFACE_VERSION, NULL))
+			{
+				g_Info_VEngineCvar = SOURCESDK_SWARM_CVAR_INTERFACE_VERSION " (Alien Swarm)";
+				SOURCESDK::SWARM::g_pCVar = SOURCESDK::SWARM::cvar = (SOURCESDK::SWARM::ICvar*)iface;
 
-			WrpConCommands::RegisterCommands(SOURCESDK::SWARM::g_pCVar);
-		}
-		else if ((iface = appSystemFactory(SOURCESDK_L4D2_CVAR_INTERFACE_VERSION, NULL)))
-		{
-			g_Info_VEngineCvar = SOURCESDK_L4D2_CVAR_INTERFACE_VERSION " (Left 4 Dead 2)";
-			SOURCESDK::L4D2::g_pCVar = SOURCESDK::L4D2::cvar = (SOURCESDK::L4D2::ICvar *)iface;
+				WrpConCommands::RegisterCommands(SOURCESDK::SWARM::g_pCVar);
+			}
+			break;
+		case SourceSdkVer_BM:
+			if (iface = appSystemFactory(SOURCESDK_BM_CVAR_INTERFACE_VERSION, NULL))
+			{
+				g_Info_VEngineCvar = SOURCESDK_BM_CVAR_INTERFACE_VERSION " (Black Mesa)";
+				SOURCESDK::BM::g_pCVar = SOURCESDK::BM::cvar = (SOURCESDK::BM::ICvar*)iface;
 
-			WrpConCommands::RegisterCommands(SOURCESDK::L4D2::g_pCVar);
+				WrpConCommands::RegisterCommands(SOURCESDK::BM::g_pCVar);
+			}
+			break;
+		default:
+			if (iface = appSystemFactory(SOURCESDK_L4D2_CVAR_INTERFACE_VERSION, NULL))
+			{
+				g_Info_VEngineCvar = SOURCESDK_L4D2_CVAR_INTERFACE_VERSION " (Left 4 Dead 2)";
+				SOURCESDK::L4D2::g_pCVar = SOURCESDK::L4D2::cvar = (SOURCESDK::L4D2::ICvar*)iface;
+
+				WrpConCommands::RegisterCommands(SOURCESDK::L4D2::g_pCVar);
+			}
+			else if (iface = appSystemFactory(VENGINE_CVAR_INTERFACE_VERSION_004, NULL))
+			{
+				g_Info_VEngineCvar = VENGINE_CVAR_INTERFACE_VERSION_004;
+				WrpConCommands::RegisterCommands((SOURCESDK::ICvar_004*)iface);
+			}
+			else if (
+				(iface = appSystemFactory(VENGINE_CVAR_INTERFACE_VERSION_003, NULL))
+				&& (iface2 = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_012, NULL)))
+			{
+				g_Info_VEngineCvar = VENGINE_CVAR_INTERFACE_VERSION_003 " & " VENGINE_CLIENT_INTERFACE_VERSION_012;
+				WrpConCommands::RegisterCommands((SOURCESDK::ICvar_003*)iface, (SOURCESDK::IVEngineClient_012*)iface2);
+			}
+			break;
 		}
-		else if((iface = appSystemFactory( VENGINE_CVAR_INTERFACE_VERSION_004, NULL )))
-		{
-			g_Info_VEngineCvar = VENGINE_CVAR_INTERFACE_VERSION_004;
-			WrpConCommands::RegisterCommands((SOURCESDK::ICvar_004 *)iface);
-		}
-		else if(
-			(iface = appSystemFactory( VENGINE_CVAR_INTERFACE_VERSION_003, NULL ))
-			&& (iface2 = appSystemFactory(VENGINE_CLIENT_INTERFACE_VERSION_012, NULL))
-		) {
-			g_Info_VEngineCvar = VENGINE_CVAR_INTERFACE_VERSION_003 " & " VENGINE_CLIENT_INTERFACE_VERSION_012;
-			WrpConCommands::RegisterCommands((SOURCESDK::ICvar_003 *)iface, (SOURCESDK::IVEngineClient_012 *)iface2);
-		}
-		else {
-			ErrorBox("Could not get a supported VEngineCvar interface.");
-		}
+		if (nullptr == iface) ErrorBox("Could not get a supported VEngineCvar interface.");
+
+		// VClientEnginteTools
 
 		if(iface = appSystemFactory(VCLIENTENGINETOOLS_INTERFACE_VERSION_001, NULL))
 		{
@@ -312,6 +350,8 @@ void MySetup(SOURCESDK::CreateInterfaceFn appSystemFactory, WrpGlobals *pGlobals
 		else {
 			ErrorBox("Could not get a supported VClientEngineTools interface.");
 		}
+
+		// Other
 
 		if(SourceSdkVer_CSGO == g_SourceSdkVer)
 		{
@@ -463,6 +503,43 @@ int __stdcall new_CVClient_Init_Swarm(DWORD *this_ptr, SOURCESDK::CreateInterfac
 	return old_CVClient_Init_Swarm(this_ptr, AppSystemFactory_ForClient, pGlobals);
 }
 
+typedef int(__stdcall * CVClient_Init_BM_t)(DWORD *this_ptr, SOURCESDK::CreateInterfaceFn appSystemFactory, SOURCESDK::CGlobalVarsBase *pGlobals);
+
+CVClient_Init_BM_t old_CVClient_Init_BM;
+
+int __stdcall new_CVClient_Init_BM(DWORD *this_ptr, SOURCESDK::CreateInterfaceFn appSystemFactory, SOURCESDK::CGlobalVarsBase *pGlobals)
+{
+	static bool bFirstCall = true;
+
+	if( bFirstCall )
+	{
+		bFirstCall = false;
+
+		MySetup(appSystemFactory, new WrpGlobalsOther(pGlobals));
+	}
+
+	return old_CVClient_Init_BM(this_ptr, AppSystemFactory_ForClient, pGlobals);
+}
+
+
+typedef int(__stdcall* CVClient_Init_Garrysmod_t)(DWORD* this_ptr, SOURCESDK::CreateInterfaceFn appSystemFactory, SOURCESDK::CreateInterfaceFn physicsFactory, SOURCESDK::CGlobalVarsBase* pGlobals, void * unknown3);
+
+CVClient_Init_Garrysmod_t old_CVClient_Init_Garrysmod;
+
+int __stdcall new_CVClient_Init_Garrysmod(DWORD* this_ptr, SOURCESDK::CreateInterfaceFn appSystemFactory, SOURCESDK::CreateInterfaceFn physicsFactory, SOURCESDK::CGlobalVarsBase* pGlobals, void* unknown3)
+{
+	static bool bFirstCall = true;
+
+	if (bFirstCall) {
+		bFirstCall = false;
+
+		MySetup(appSystemFactory, new WrpGlobalsOther(pGlobals));
+	}
+
+	return old_CVClient_Init_Garrysmod(this_ptr, AppSystemFactory_ForClient, physicsFactory, pGlobals, unknown3);
+}
+
+
 void Shared_BeforeFrameRenderStart(void)
 {
 	g_MirvTime.OnFrameRenderStart();
@@ -569,23 +646,6 @@ public:
 
 	~CAfxBaseClientDll()
 	{
-	}
-
-	void OnPanoramaDebuggerOpened()
-	{
-		if (m_IN_MouseActive)
-		{
-			m_Parent->IN_DeactivateMouse();
-			ReleaseCapture();
-		}
-	}
-
-	void OnPanoramaDebuggerClosed()
-	{
-		if (m_IN_MouseActive)
-		{
-			m_Parent->IN_ActivateMouse();
-		}
 	}
 
 	//
@@ -759,16 +819,6 @@ private:
 
 CAfxBaseClientDll * g_AfxBaseClientDll = 0;
 
-
-void OnPanoramaDebuggerOpened() {
-	g_AfxBaseClientDll->OnPanoramaDebuggerOpened();
-}
-
-void OnPanoramaDebuggerClosed() {
-	g_AfxBaseClientDll->OnPanoramaDebuggerClosed();
-}
-
-
 __declspec(naked) int CAfxBaseClientDll::Connect(SOURCESDK::CreateInterfaceFn appSystemFactory, SOURCESDK::CGlobalVarsBase *pGlobals)
 { NAKED_JMP_CLASSMEMBERIFACE_FN(CAfxBaseClientDll, m_Parent, 0) }
 
@@ -912,13 +962,7 @@ void CAfxBaseClientDll::IN_ActivateMouse(void)
 
 	m_IN_MouseActive = true;
 
-	if (EngineHooks_PanoramaDebuggerActive())
-	{
-		m_Parent->IN_DeactivateMouse();
-		ReleaseCapture();
-	}
-	else 
-		m_Parent->IN_ActivateMouse();
+	m_Parent->IN_ActivateMouse();
 }
 
 void CAfxBaseClientDll::IN_DeactivateMouse(void)
@@ -1398,6 +1442,13 @@ void HookClientDllInterface_Swarm_Init(void * iface)
 	DetourIfacePtr((DWORD *)&(vtable[1]), new_CVClient_Init_Swarm, (DetourIfacePtr_fn &)old_CVClient_Init_Swarm);
 }
 
+void HookClientDllInterface_BM_Init(void * iface)
+{
+	int * vtable = *(int**) iface;
+
+	DetourIfacePtr((DWORD *)&(vtable[2]), new_CVClient_Init_BM, (DetourIfacePtr_fn &) old_CVClient_Init_BM);
+}
+
 void HookClientDllInterface_Insurgency2_Init(void * iface)
 {
 	int * vtable = *(int**)iface;
@@ -1405,6 +1456,12 @@ void HookClientDllInterface_Insurgency2_Init(void * iface)
 	DetourIfacePtr((DWORD *)&(vtable[2]), new_CVClient_Init_Swarm, (DetourIfacePtr_fn &)old_CVClient_Init_Swarm);
 }
 
+void HookClientDllInterface_Garrysmod_Init(void* iface)
+{
+	int* vtable = *(int**)iface;
+
+	DetourIfacePtr((DWORD*) & (vtable[0]), new_CVClient_Init_Garrysmod, (DetourIfacePtr_fn&)old_CVClient_Init_Garrysmod);
+}
 
 SOURCESDK::IClientEntityList_csgo * SOURCESDK::g_Entitylist_csgo = 0;
 
@@ -1425,13 +1482,29 @@ void* new_Client_CreateInterface(const char *pName, int *pReturnCode)
 		if(SourceSdkVer_CSGO != g_SourceSdkVer)
 		{
 			if (iface = old_Client_CreateInterface(CLIENT_DLL_INTERFACE_VERSION_018, NULL)) {
-				g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_018;
-				HookClientDllInterface_011_Init(iface);
+				if( SourceSdkVer_BM == g_SourceSdkVer )
+				{
+					g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_018 " (Black Mesa)";
+					HookClientDllInterface_BM_Init(iface);
+				}
+				else
+				{
+					g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_018;
+					HookClientDllInterface_011_Init(iface);
+				}
 			}
 			else
 			if(iface = old_Client_CreateInterface(CLIENT_DLL_INTERFACE_VERSION_017, NULL)) {
-				g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_017;
-				HookClientDllInterface_011_Init(iface);
+				if (SourceSdkVer_Garrysmod == g_SourceSdkVer)
+				{
+					g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_017 " (Garrysmod)";
+					HookClientDllInterface_Garrysmod_Init(iface);
+				}
+				else
+				{
+					g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_017;
+					HookClientDllInterface_011_Init(iface);
+				}
 			}
 			else if(iface = old_Client_CreateInterface(CLIENT_DLL_INTERFACE_VERSION_016, NULL)) {
 				if (SourceSdkVer_Insurgency2 == g_SourceSdkVer)
@@ -1439,7 +1512,7 @@ void* new_Client_CreateInterface(const char *pName, int *pReturnCode)
 					g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_016 " (Insurgency2)";
 					HookClientDllInterface_Insurgency2_Init(iface);
 				}
-				else if (SourceSdkVer_SWARM == g_SourceSdkVer || SourceSdkVer_L4D2 == g_SourceSdkVer)
+				else if (SourceSdkVer_SWARM == g_SourceSdkVer || SourceSdkVer_L4D2 == g_SourceSdkVer )
 				{
 					g_Info_VClient = CLIENT_DLL_INTERFACE_VERSION_016 " (Alien Swarm / Left 4 Dead 2)";
 					HookClientDllInterface_Swarm_Init(iface);
@@ -1860,7 +1933,7 @@ void CommonHooks()
 		char filePath[MAX_PATH] = { 0 };
 		GetModuleFileName(0, filePath, MAX_PATH);
 
-		if (wcsstr(GetCommandLineW(), L"-afxV34"))
+		if (g_CommandLine->FindParam(L"-afxV34"))
 		{
 			g_SourceSdkVer = SourceSdkVer_CSSV34;
 		}
@@ -1876,18 +1949,29 @@ void CommonHooks()
 		{
 			g_SourceSdkVer = SourceSdkVer_L4D2;
 		}
+		else if (StringIEndsWith(filePath, "bms.exe"))
+		{
+			g_SourceSdkVer = SourceSdkVer_BM;
+		}
 		else if (StringIEndsWith(filePath, "insurgency.exe"))
 		{
 			g_SourceSdkVer = SourceSdkVer_Insurgency2;
 		}
-		else if (wcsstr(GetCommandLineW(), L" -game tf"))
+		else if (int gameIdx = g_CommandLine->FindParam(L"-game"))
 		{
-			g_SourceSdkVer = SourceSdkVer_TF2;
+			++gameIdx;
+			if (gameIdx < g_CommandLine->GetArgC())
+			{
+				const wchar_t* game = g_CommandLine->GetArgV(gameIdx);
+				if(0 == _wcsicmp(L"tf", game))
+					g_SourceSdkVer = SourceSdkVer_TF2;
+				else if (0 == _wcsicmp(L"cstrike", game))
+					g_SourceSdkVer = SourceSdkVer_CSS;
+				else if (0 == _wcsicmp(L"garrysmod", game))
+					g_SourceSdkVer = SourceSdkVer_Garrysmod;
+			}
 		}
-		else if (wcsstr(GetCommandLineW(), L" -game cstrike"))
-		{
-			g_SourceSdkVer = SourceSdkVer_CSS;
-		}
+
 
 		//ScriptEngine_StartUp();
 	}
@@ -1942,17 +2026,26 @@ void CommonHooks()
 				else ErrorBox("Could not find tier0!Commandline.");
 				*/
 			}
+
 			if (SourceSdkVer_SWARM == g_SourceSdkVer)
 			{
 				SOURCESDK::SWARM::g_pMemAlloc = *(SOURCESDK::SWARM::IMemAlloc **)GetProcAddress(hTier0, "g_pMemAlloc");
 			}
-			else
+			else if( SourceSdkVer_BM == g_SourceSdkVer )
 			{
-				if (SOURCESDK::L4D2::IMemAlloc ** ppMemalloc = (SOURCESDK::L4D2::IMemAlloc **)GetProcAddress(hTier0, "g_pMemAlloc"))
+				if( SOURCESDK::BM::IMemAlloc ** ppMemalloc = (SOURCESDK::BM::IMemAlloc **)GetProcAddress(hTier0, "g_pMemAlloc") )
+				{
+					SOURCESDK::BM::g_pMemAlloc = *ppMemalloc;
+				}
+			}
+			else // default fallback // if (SourceSdkVer_L4D2 == g_SourceSdkVer)
+			{
+				if (SOURCESDK::L4D2::IMemAlloc** ppMemalloc = (SOURCESDK::L4D2::IMemAlloc**)GetProcAddress(hTier0, "g_pMemAlloc"))
 				{
 					SOURCESDK::L4D2::g_pMemAlloc = *ppMemalloc;
 				}
 			}
+
 		}
 	}
 }
@@ -2035,9 +2128,9 @@ void LibraryHooksA(HMODULE hModule, LPCSTR lpLibFileName)
 		InterceptDllCall(hModule, "USER32.dll", "ReleaseCapture", (DWORD)&new_ReleaseCapture);
 
 		// Init the hook early, so we don't run into issues with threading:
-		EngineHooks_Install();
 		Hook_csgo_SndMixTimeScalePatch();
 		csgo_Audio_Install();
+		//Hook_csgo_DemoFile();
 	}
 	else
 	if(bFirstInputsystem && StringEndsWith( lpLibFileName, "inputsystem.dll"))

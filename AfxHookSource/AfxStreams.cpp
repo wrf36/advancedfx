@@ -6868,11 +6868,12 @@ bool CAfxStreams::Console_EditStream(CAfxRenderViewStream * stream, IWrpCommandA
 
 					if(Console_ToStreamCaptureType(cmd1, value))
 					{
-						if(value == CAfxRenderViewStream::SCT_DepthF || CAfxRenderViewStream::SCT_DepthFZIP)
+						if(value == CAfxRenderViewStream::SCT_DepthF || value == CAfxRenderViewStream::SCT_DepthFZIP)
 						{
 							if(!(AfxD3D9_Check_Supports_R32F_With_Blending() && m_RenderTargetDepthF))
 							{
-								Tier0_Warning("AFXERROR: This capture type ist not fully supported according to your graphics card / driver!\n");
+								Tier0_Warning("AFXERROR: This capture type ist not supported according to your graphics card / driver. Aborting to avoid crashes.\n");
+								return true;
 							}
 						}
 						curRenderView->StreamCaptureType_set(value);
@@ -8274,9 +8275,6 @@ MirvPgl::CamData GetMirvPglCamData(SOURCESDK::vrect_t_csgo *rect) {
 	);
 }
 
-extern SOURCESDK::CSGO::panorama::CTopLevelWindowSource2 * panoramaDebuggerTopLevelWindow;
-extern HWND panoramaDebuggerHwnd;
-
 void CAfxStreams::View_Render(IAfxBaseClientDll * cl, SOURCESDK::vrect_t_csgo *rect)
 {
 	SetCurrent_View_Render_ThreadId(GetCurrentThreadId());
@@ -8293,12 +8291,6 @@ void CAfxStreams::View_Render(IAfxBaseClientDll * cl, SOURCESDK::vrect_t_csgo *r
 	cl->GetParent()->View_Render(rect);
 
 	//IAfxMatRenderContextOrg * ctxp = GetCurrentContext()->GetOrg(); // We are on potentially a new context now!
-
-	if (panoramaDebuggerTopLevelWindow) {
-		panoramaDebuggerTopLevelWindow->SetVisible(false);
-		panoramaDebuggerTopLevelWindow->RunFrame(GetActiveWindow(), 1);
-		//panoramaDebuggerTopLevelWindow->LayoutAndPaintIfNeeded();
-	}
 
 #ifdef AFX_MIRV_PGL
 	if (MirvPgl::IsDrawingActive())
@@ -9148,7 +9140,7 @@ void CAfxRecordingSettings::Console(IWrpCommandArgs * args)
 
 	Tier0_Msg(
 		"%s print - List currently registerred settings\n"
-		"%s edit <name> - Remove setting.\n"
+		"%s edit <name> - Edit setting.\n"
 		"%s remove <name> - Remove setting.\n"
 		"%s add [...] - Add a setting.\n"
 		, arg0

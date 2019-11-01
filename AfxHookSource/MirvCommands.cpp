@@ -29,6 +29,7 @@
 #include "csgo_c_baseentity.h"
 #include "csgo_c_baseanimatingoverlay.h"
 #include "FovScaling.h"
+//#include "csgo_CDemoFile.h"
 
 #include "csgo_Stdshader_dx9_Hooks.h"
 //#include <csgo/sdk_src/public/tier0/memalloc.h>
@@ -1392,7 +1393,7 @@ CON_COMMAND(mirv_campath,"camera paths")
 		if(!_stricmp("add", subcmd) && 2 == argc)
 		{
 			g_Hook_VClient_RenderView.m_CamPath.Add(
-				g_MirvTime.GetTime(),
+				g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset(),
 				CamPathValue(
 					g_Hook_VClient_RenderView.LastCameraOrigin[0],
 					g_Hook_VClient_RenderView.LastCameraOrigin[1],
@@ -1504,9 +1505,11 @@ CON_COMMAND(mirv_campath,"camera paths")
 		}
 		else if(!_stricmp("print", subcmd) && 2 == argc)
 		{
-			Tier0_Msg("passed? selected? id: tick[approximate!], demoTime[approximate!], gameTime -> (x,y,z) fov (pitch,yaw,roll)\n");
+			Tier0_Msg("passed? selected? id: tick[offset](approximate!), demoTime[offset](approximate!), gameTime[offset] -> (x,y,z) fov (pitch,yaw,roll)\n");
 
 			double curtime = g_MirvTime.GetTime();
+
+			double offset = g_Hook_VClient_RenderView.m_CamPath.GetOffset();
 			
 			int i=0;
 			for(CamPathIterator it = g_Hook_VClient_RenderView.m_CamPath.GetBegin(); it != g_Hook_VClient_RenderView.m_CamPath.GetEnd(); ++it)
@@ -1530,37 +1533,87 @@ CON_COMMAND(mirv_campath,"camera paths")
 
 				Tier0_Msg(
 					"%s %s %i: ",
-					time <= curtime ? "Y" : "n",
+					time <= curtime + offset ? "Y" : "n",
 					selected ? "Y" : "n",
 					i
 				);
 				
-				int myTick;
-				if(GetDemoTickFromTime(curtime, time, myTick))
-					Tier0_Msg("%i", myTick);
+				if (offset)
+				{
+					int myTick, myTickOffset;
+					if (GetDemoTickFromTime(curtime, time, myTick) && GetDemoTickFromTime(curtime + offset, time, myTickOffset))
+					{
+						int delta = myTickOffset - myTick;
+						Tier0_Msg("%i%s%i", myTick, delta < 0 ? "" : "+", delta);
+					}
+					else
+						Tier0_Msg("n/a");
+				}
 				else
-					Tier0_Msg("n/a");
+				{
+					int myTick;
+					if (GetDemoTickFromTime(curtime, time, myTick))
+						Tier0_Msg("%i", myTick);
+					else
+						Tier0_Msg("n/a");
+				}
 
 				Tier0_Msg(", ");
 
 				double myDemoTime;
-				if(GetDemoTimeFromTime(curtime, time, myDemoTime))
+				if (GetDemoTimeFromTime(curtime, time, myDemoTime))
+				{
 					PrintTimeFormated(myDemoTime);
+					if (offset > 0)
+					{
+						Tier0_Msg("+");
+					}
+					if (offset)
+					{
+						PrintTimeFormated(offset);
+					}
+				}
 				else
 					Tier0_Msg("n/a");
 
-				Tier0_Msg(", %f -> (%f,%f,%f) %f (%f,%f,%f)\n",
-					time,
-					vieworigin[0],vieworigin[1],vieworigin[2],
-					fov,
-					viewangles[0],viewangles[1],viewangles[2]
-				);
+				if (offset > 0)
+				{
+					Tier0_Msg(", %f+%f -> (%f,%f,%f) %f (%f,%f,%f)\n",
+						time, offset,
+						vieworigin[0], vieworigin[1], vieworigin[2],
+						fov,
+						viewangles[0], viewangles[1], viewangles[2]
+					);
+				}
+				else if (offset < 0)
+				{
+					Tier0_Msg(", %f%f -> (%f,%f,%f) %f (%f,%f,%f)\n",
+						time, offset,
+						vieworigin[0], vieworigin[1], vieworigin[2],
+						fov,
+						viewangles[0], viewangles[1], viewangles[2]
+					);
+				}
+				else
+				{
+					Tier0_Msg(", %f -> (%f,%f,%f) %f (%f,%f,%f)\n",
+						time,
+						vieworigin[0], vieworigin[1], vieworigin[2],
+						fov,
+						viewangles[0], viewangles[1], viewangles[2]
+					);
+				}
 
 				i++;
 			}
 			
 			Tier0_Msg("----\n");
 			
+			if (offset)
+			{
+				Tier0_Msg("Current offset: %s%f, ", offset < 0 ? "" : "+", offset);
+			}
+
 			Tier0_Msg("Current tick: ");
 			int curTick;
 			bool hasCurTick;
@@ -1638,7 +1691,7 @@ CON_COMMAND(mirv_campath,"camera paths")
 					if(3 == argc)
 					{
 						g_Hook_VClient_RenderView.m_CamPath.SetStart(
-							g_MirvTime.GetTime()
+							g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset()
 						);
 
 						return;
@@ -1653,7 +1706,7 @@ CON_COMMAND(mirv_campath,"camera paths")
 							char const * arg4 = args->ArgV(4);
 
 							g_Hook_VClient_RenderView.m_CamPath.SetStart(
-								atof(arg4)
+								atof(arg4) - g_Hook_VClient_RenderView.m_CamPath.GetOffset()
 							);
 
 							return;
@@ -2066,17 +2119,17 @@ CON_COMMAND(mirv_campath,"camera paths")
 						}
 						else if(!_stricmp(fromArg, "current"))
 						{
-							fromValue = g_MirvTime.GetTime();
+							fromValue = g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset();
 						}
 						else if(StringBeginsWith(fromArg, "current+"))
 						{
-							fromValue = g_MirvTime.GetTime();
+							fromValue = g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset();
 							fromArg += strlen("current+");
 							fromValue += atof(fromArg);
 						}
 						else if(StringBeginsWith(fromArg, "current-"))
 						{
-							fromValue = g_MirvTime.GetTime();
+							fromValue = g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset();
 							fromArg += strlen("current-");
 							fromValue -= atof(fromArg);
 						}
@@ -2103,15 +2156,19 @@ CON_COMMAND(mirv_campath,"camera paths")
 							++toArg;
 							toId = atoi(toArg);
 						}
+						else if (!_stricmp(toArg, "current"))
+						{
+							toValue = g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset();
+						}
 						else if(StringBeginsWith(toArg, "current+"))
 						{
-							toValue = g_MirvTime.GetTime();
+							toValue = g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset();
 							toArg += strlen("current+");
 							toValue += atof(toArg);
 						}
 						else if(StringBeginsWith(toArg, "current-"))
 						{
-							toValue = g_MirvTime.GetTime();
+							toValue = g_MirvTime.GetTime() - g_Hook_VClient_RenderView.m_CamPath.GetOffset();
 							toArg += strlen("current-");
 							toValue -= atof(toArg);
 						}
@@ -2179,7 +2236,114 @@ CON_COMMAND(mirv_campath,"camera paths")
 				"Hint: All time values are in game time (in seconds).\n"
 			);
 			return;
+		}
+		else if (0 == _stricmp("offset", subcmd))
+		{
+			if (3 == argc)
+			{
+				const char* arg2 = args->ArgV(2);
 
+				if (0 == _stricmp("none", arg2))
+				{
+					g_Hook_VClient_RenderView.m_CamPath.SetOffset(0);
+					return;
+				}
+
+				double offset = 0;
+				
+				if (StringBeginsWith(arg2, "current#"))
+				{
+					std::string tmpStr(arg2 + strlen("current#"));
+
+					size_t posChr = tmpStr.find('+');
+					if (std::string::npos != posChr)
+					{
+						offset += atof(tmpStr.c_str() + posChr + 1);
+						tmpStr = tmpStr.substr(0, posChr);
+					}
+					else {
+						posChr = tmpStr.find('-');
+						if (std::string::npos != posChr)
+						{
+							offset -= atof(tmpStr.c_str() + posChr + 1);
+							tmpStr = tmpStr.substr(0, posChr);
+						}
+					}
+
+					int keyFrame = atoi(tmpStr.c_str());
+
+					int curFrame = 0;
+
+					for (CamPathIterator it = g_Hook_VClient_RenderView.m_CamPath.GetBegin(); it != g_Hook_VClient_RenderView.m_CamPath.GetEnd(); ++it)
+					{
+						if (curFrame == keyFrame)
+						{
+							offset += g_MirvTime.GetCurTime() - it.GetTime();
+
+							g_Hook_VClient_RenderView.m_CamPath.SetOffset(offset);
+
+							return;
+						}
+
+						++curFrame;
+					}
+
+					Tier0_Warning("AFXERROR: Keyframe %i was not found.\n", keyFrame);
+					return;
+				}
+				if (StringBeginsWith(arg2, "current"))
+				{
+					std::string tmpStr(arg2 + strlen("current"));
+
+					size_t posChr = tmpStr.find('+');
+					if (std::string::npos != posChr)
+					{
+						offset += atof(tmpStr.c_str() + posChr + 1);
+						tmpStr = tmpStr.substr(0, posChr);
+					}
+					else {
+						posChr = tmpStr.find('-');
+						if (std::string::npos != posChr)
+						{
+							offset -= atof(tmpStr.c_str() + posChr + 1);
+							tmpStr = tmpStr.substr(0, posChr);
+						}
+					}
+
+					if (g_Hook_VClient_RenderView.m_CamPath.GetSize() < 1)
+					{
+						Tier0_Warning("AFXERROR: Campath must not be empty.\n");
+						return;
+					}
+
+					offset += g_MirvTime.GetCurTime() - g_Hook_VClient_RenderView.m_CamPath.GetLowerBound();
+
+					g_Hook_VClient_RenderView.m_CamPath.SetOffset(offset);
+
+					return;
+				}
+				else
+				{
+					offset = g_Hook_VClient_RenderView.m_CamPath.GetOffset();
+					offset += atof(arg2);
+					g_Hook_VClient_RenderView.m_CamPath.SetOffset(offset);
+					return;
+				}
+			}
+
+			Tier0_Msg(
+				"mirv_campath offset none|current[#<iKeyFrameNr>][(+|-)<fSeconds>]|<fSeconds> - Set an offset for the campath to be used (affects playback and various other operations).\n"
+				"Current value: %f\n"
+				"Examples:\n"
+				"mirv_campath offset current -  makes it start at current time.\n"
+				"mirv_campath offset current+2.5 - makes it start at current time + 2.5 seconds.\n"
+				"mirv_campath offset current#3 - makes current time being at keyframe 3 time.\n"
+				"mirv_campath offset current#3-1 - makes current time being at keyframe 3 time - 1 seconds.\n"
+				"mirv_campath offset -1 - offsets it by -1 seconds (so it will start earlier).\n"
+				"mirv_campath offset none - disables it\n"
+				, g_Hook_VClient_RenderView.m_CamPath.GetOffset()
+			);
+			return;
 		}
 	}
 
@@ -2194,6 +2358,7 @@ CON_COMMAND(mirv_campath,"camera paths")
 		"mirv_campath save <fileName> - Saves the campath to the file (XML format)\n"
 		"mirv_campath edit [...] - Edit properties of the path [or selected keyframes]\n"
 		"mirv_campath select [...] - Keyframe selection.\n"
+		"mirv_campath offset [...] - Offset campath.\n"
 	);
 	return;
 }
@@ -3842,7 +4007,7 @@ CON_COMMAND(mirv_cmd, "Command system (for scheduling commands).")
 		}
 		else if(!_stricmp("enabled", subcmd))
 		{
-			if(3 < argc)
+			if(3 <= argc)
 			{
 				g_CommandSystem.Enabled = 0 != atof(args->ArgV(2));
 				return;
@@ -4048,6 +4213,31 @@ CON_COMMAND(mirv_fix, "Various fixes")
 			);
 			return;
 		}
+		/*
+		else if (0 == _stricmp("demoIndexTicks", cmd1))
+		{
+			if (!Hook_csgo_DemoFile())
+			{
+				Tier0_Warning("Error: Required hooks not installed.\n");
+				return;
+			}
+
+			if (3 <= argc)
+			{
+				char const * cmd2 = args->ArgV(2);
+
+				g_bFixCDemoFileTicks = atoi(cmd2);
+				return;
+			}
+
+			Tier0_Msg(
+				"mirv_fix demoIndexTicks <iValue> - Set to 1 or greater to enable indexing (sane values are 1920 ticks or greater), set 0 or less to disable.\n"
+				"Current value: %i\n",
+				g_bFixCDemoFileTicks
+			);
+			return;
+		}
+		*/
 	}
 
 	Tier0_Msg(
@@ -4055,6 +4245,7 @@ CON_COMMAND(mirv_fix, "Various fixes")
 		"mirv_fix blockObserverTarget [...] - Fixes unwanted player switching i.e. upon bomb plant (blocks C_BasePlayer::RecvProxy_ObserverTarget).\n"
 		"mirv_fix oldDuckFix [...] - Can fix player stuck in duck for old demos.\n"
 		"mirv_fix playerAnimState [...] - Fixes twitching of player arms/legs, see https://github.com/ripieces/advancedfx/wiki/Source%%3ASmoother-Demos .\n"
+		//"mirv_fix demoIndexTicks [...] - Tries to make backward skipping faster in demos.\n"
 	);
 	return;
 }
