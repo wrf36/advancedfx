@@ -2326,9 +2326,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved)
 	{ 
 		case DLL_PROCESS_ATTACH:
 		{
-			/*
 			g_CommandLine = new CAfxCommandLine();
 
+			/*
 			if(!g_CommandLine->FindParam(L"-insecure"))
 			{
 				ErrorBox("Please add -insecure to launch options, AfxHookSource will refuse to work without it!");
