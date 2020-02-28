@@ -21,6 +21,100 @@ namespace AfxGui
         {
             InitializeComponent();
             this.Icon = Program.Icon;
+            this.pictureBoxHelp.Image = SystemIcons.Information.ToBitmap();
+
+            this.Text = L10n._p("Main window", "Half-Life Advanced Effects");
+
+            this.fileToolStripMenuItem.Text = L10n._p("Main window | menu", "File");
+            this.menuLaunchCSGO.Text = L10n._p("Main window | menu | File", "Launch CS:GO");
+            this.launchGoldSrcToolStripMenuItem.Text = L10n._p("Main window | menu | File", "Launch GoldSrc");
+            this.menuExit.Text = L10n._p("Main window | menu | File", "Exit");
+
+            this.viewToolStripMenuItem.Text = L10n._p("Main Window | menu", "View");
+            this.menuStatusBar.Text = L10n._p("Main window | menu | View", "Status Bar");
+
+            this.toolsToolStripMenuItem.Text = L10n._p("Main window | menu", "Tools");            
+            this.calculatorsToolStripMenuItem.Text = L10n._p("Main window | menu | Tools", "Calculators");
+            this.menuFileSize.Text = L10n._p("Main window | menu | Tools | Calculators", "File Size");
+            this.goldSrcToolStripMenuItem.Text = L10n._p("Main window | menu | Tools", "GoldSrc");
+            this.demoToolsToolStripMenuItem.Text = L10n._p("Main window | menu | Tools | GoldSrc", "Demo Tools");
+            this.skyManagerToolStripMenuItem.Text = L10n._p("Main window | menu | Tools | GoldSrc", "Sky Manager");
+
+            this.developerToolStripMenuItem.Text = L10n._p("Main window | menu | Tools", "Developer");
+            this.menuCustomLoader.Text = L10n._p("Main window | menu | Tools | Developer", "Custom Loader");
+            this.menuGuidToClipBoard.Text = L10n._p("Main window | menu | Tools | Developer", "Own GUID to ClipBoard");
+            this.menuNewGuidToClipBoard.Text = L10n._p("Main window | menu | Tools | Developer", "New GUID to ClipBoard");
+
+            this.helpToolStripMenuItem.Text = L10n._p("Main window | menu", "Help");
+            this.checkForUpdatesToolStripMenuItem.Text = L10n._p("Main window | menu | Help", "Check for Updates");
+            this.menuAutoUpdateCheck.Text = L10n._p("Main window | menu | Help | Check for Updates", "Auto Check");
+            this.checkNowToolStripMenuItem.Text = L10n._p("Main window | menu | Help | Check for Updates", "Check Now");
+            this.menuAdvancedFxOrg.Text = L10n._p("Main window | menu | Help", "Official Website");
+
+            this.donateToolStripMenuItem.Text = L10n._p("Main window | menu", "Donate");
+
+            this.checkUpdatesLabel.Text = L10n._p("Main window | check updates strip", "Check for updates automatically?");
+            this.statusLabelAutoYes.Text = L10n._p("Main window | check updates strip", "Yes");
+            this.statusLabelAutoNo.Text = L10n._p("Main window | check updates strip", "No");
+
+
+            this.statusLabelIgnore.Text = L10n._p("Main window | update status strip", "Ignore");
+            this.statusLabelHide.Text = L10n._p("Main window | update status strip", "OK");
+            this.statusLabelUpdate.Text = L10n._p("Main window | update status strip | label", "Update status unknown");
+
+            this.groupBoxHelp.Text = L10n._("Help");
+            this.labelHelpLanguage.Text = L10n._("Language:");
+            this.labelHelpSelection.Text = L10n._("Selection:");
+            {
+                HelpEntry officialEnglishSupportPage = new HelpEntry(L10n._("Official support page (English)"), "https://www.advancedfx.org/support/");
+                HelpEntry chinesePage = new HelpEntry(L10n._("HLAE Chinese Station"), "https://hlae.site/");
+
+                helpLanguages = new HelpLanguage[] {
+                    new HelpLanguage("en", L10n._p("Language", "English (en)"), new HelpEntry[] {
+                        officialEnglishSupportPage
+                    }),
+                    new HelpLanguage("zh-CN", L10n._p("Language", "Chinese (zh-CN)"), new HelpEntry[] {
+                        chinesePage
+                    })
+                };
+
+                this.comboBoxHelpLanguage.Items.AddRange(helpLanguages);
+
+                string ietfLanguageTagPath = System.IO.Path.Combine(System.Windows.Forms.Application.StartupPath, "locales", System.Globalization.CultureInfo.CurrentUICulture.IetfLanguageTag, "hlae", "messages.mo");
+                string twoLetterIsoLanguageNamPath = System.IO.Path.Combine(System.Windows.Forms.Application.StartupPath, "locales", System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName, "hlae", "messages.mo");
+
+                // Select a default language:
+
+                int selectIndex = -1;
+                int curIndex = 0;
+
+                foreach(HelpLanguage helpLanguage in helpLanguages)
+                {
+                    if(helpLanguage.Code.Equals(ietfLanguageTagPath))
+                    {
+                        selectIndex = curIndex;
+                        break;
+                    }
+                    ++curIndex;
+                }
+
+                if(selectIndex == -1)
+                {
+                    foreach (HelpLanguage helpLanguage in helpLanguages)
+                    {
+                        if (helpLanguage.Code.Equals(twoLetterIsoLanguageNamPath))
+                        {
+                            selectIndex = curIndex;
+                            break;
+                        }
+                        ++curIndex;
+                    }
+                }
+
+                if (selectIndex == -1 && 0 < helpLanguages.Length) selectIndex = 0;
+
+                if (selectIndex != -1) comboBoxHelpLanguage.SelectedIndex = selectIndex;
+            }
 
             m_UpdateCheckNotification = new UpdateCheckNotificationTarget(this, new UpdateCheckedDelegate(OnUpdateChecked));
         }
@@ -30,6 +124,43 @@ namespace AfxGui
 
         Guid m_LastUpdateGuid;
         UpdateCheckNotificationTarget m_UpdateCheckNotification;
+        HelpLanguage[] helpLanguages;
+
+        class HelpLanguage
+        {
+            public HelpLanguage(string code, string label, HelpEntry[] items)
+            {
+                this.Code = code;
+                this.Label = label;
+                this.Items = items;
+            }
+
+            public override string ToString()
+            {
+                return Label;
+            }
+
+            public string Code { get; }
+            public string Label { get; }
+            public HelpEntry[] Items { get; }
+        }
+
+        class HelpEntry 
+        {
+            public HelpEntry(string label, string url)
+            {
+                this.Label = label;
+                this.Url = url;
+            }
+
+            public string Label { get; }
+            public string Url { get; }
+
+            public override string ToString()
+            {
+                return Label;
+            }
+        }
 
         void OnUpdateChecked(object o, IUpdateCheckResult checkResult)
         {
@@ -50,7 +181,7 @@ namespace AfxGui
                     statusStrip.Visible = statusStrip.Visible || notIgnored;
                     statusLabelUpdate.IsLink = true;
                     statusLabelUpdate.Tag = null != checkResult.Uri ? checkResult.Uri.ToString() : "http://advancedfx.org/";
-                    statusLabelUpdate.Text = "Update available!";
+                    statusLabelUpdate.Text = L10n._p("Main window | update status strip | label" , "Update available!");
                     statusLabelUpdate.ForeColor = Color.Black;
                     statusLabelUpdate.BackColor = Color.Orange;
                 }
@@ -59,7 +190,7 @@ namespace AfxGui
                     // Is recent:
                     statusLabelIgnore.Visible = false;
                     statusLabelUpdate.IsLink = false;
-                    statusLabelUpdate.Text = "Your version is up to date :)";
+                    statusLabelUpdate.Text = L10n._p("Main window | update status strip | label", "Your version is up to date :)");
                     statusLabelUpdate.ForeColor = Color.Black;
                     statusLabelUpdate.BackColor = Color.LightGreen;
                 }
@@ -71,7 +202,7 @@ namespace AfxGui
                 statusStrip.Visible = true;
                 statusLabelUpdate.IsLink = true;
                 statusLabelUpdate.Tag = "http://advancedfx.org/";
-                statusLabelUpdate.Text = "Update check failed :(";
+                statusLabelUpdate.Text = L10n._p("Main window | update status strip | label", "Update check failed :(");
                 statusLabelUpdate.ForeColor = Color.Black;
                 statusLabelUpdate.BackColor = Color.LightCoral;
             }
@@ -80,7 +211,7 @@ namespace AfxGui
         void StartUpdateCheck()
         {
             this.statusLabelUpdate.IsLink = false;
-            this.statusLabelUpdate.Text = "Checking for updates ...";
+            this.statusLabelUpdate.Text = L10n._p("Main window | update status strip | label", "Checking for updates ...");
             this.statusLabelUpdate.ForeColor = Color.FromKnownColor(KnownColor.ControlText);
             this.statusLabelUpdate.BackColor = Color.FromKnownColor(KnownColor.Control);
 
@@ -233,6 +364,45 @@ namespace AfxGui
         {
             AfxCppCli.old.tools.skymanager sm = new AfxCppCli.old.tools.skymanager(GlobalConfig.Instance.Settings.Launcher.GamePath);
             sm.Show(this);
+        }
+
+        private void comboBoxHelpEntry_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if(0 <= comboBoxHelpEntries.SelectedIndex && comboBoxHelpEntries.SelectedIndex < comboBoxHelpEntries.Items.Count)
+            {
+                HelpEntry helpEntry = (HelpEntry)comboBoxHelpEntries.Items[comboBoxHelpEntries.SelectedIndex];
+                buttonManual.Text = helpEntry.Url;
+            }
+        }
+
+        private void comboBoxHelpLanguage_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if (0 <= comboBoxHelpLanguage.SelectedIndex && comboBoxHelpLanguage.SelectedIndex < comboBoxHelpLanguage.Items.Count)
+            {
+                HelpLanguage helpLanguage = (HelpLanguage)comboBoxHelpLanguage.Items[comboBoxHelpLanguage.SelectedIndex];
+
+                comboBoxHelpEntries.Items.Clear();
+                comboBoxHelpEntries.Items.AddRange(helpLanguage.Items);
+
+                if (0 < helpLanguage.Items.Length) comboBoxHelpEntries.SelectedIndex = 0;
+            }
+        }
+
+        private void buttonManual_Click(object sender, EventArgs e)
+        {
+            if (0 <= comboBoxHelpEntries.SelectedIndex && comboBoxHelpEntries.SelectedIndex < comboBoxHelpEntries.Items.Count)
+            {
+                HelpEntry helpEntry = (HelpEntry)comboBoxHelpEntries.Items[comboBoxHelpEntries.SelectedIndex];
+                System.Diagnostics.Process.Start(helpEntry.Url);
+            }
+        }
+
+        private void l10nToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            using(AfxRgbaLutVoronoiGenerator dlg = new AfxRgbaLutVoronoiGenerator())
+            {
+                dlg.ShowDialog(this);
+            }
         }
     }
 }

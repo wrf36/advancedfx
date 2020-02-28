@@ -70,6 +70,9 @@
     <CodeAnalysisRuleSet>MinimumRecommendedRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="NGettext, Version=0.6.1.0, Culture=neutral, PublicKeyToken=08d3d1c89dfd2985, processorArchitecture=MSIL">
+      <HintPath>..\packages\NGettext.0.6.5\lib\net40\NGettext.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="Microsoft.CSharp" />
@@ -80,12 +83,10 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="..\injector\AfxError.cs">
-      <Link>AfxError.cs</Link>
+    <Compile Include="..\injector\InjectorMessages.cs">
+      <Link>InjectorMessages.cs</Link>
     </Compile>
-    <Compile Include="..\injector\InjectorErrors.cs">
-      <Link>InjectorErrors.cs</Link>
-    </Compile>
+    <Compile Include="AfxError.cs" />
     <Compile Include="Config.cs" />
     <Compile Include="ErrorDialogue.cs">
       <SubType>Form</SubType>
@@ -95,6 +96,13 @@
     </Compile>
     <Compile Include="Globals.cs" />
     <Compile Include="HlaeErrors.cs" />
+    <Compile Include="AfxRgbaLutVoronoiGenerator.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="AfxRgbaLutVoronoiGenerator.Designer.cs">
+      <DependentUpon>AfxRgbaLutVoronoiGenerator.cs</DependentUpon>
+    </Compile>
+    <Compile Include="L10n.cs" />
     <Compile Include="LaunchCsgo.cs" />
     <Compile Include="LaunchCsgoForm.cs">
       <SubType>Form</SubType>
@@ -132,8 +140,20 @@
       <DependentUpon>CustomLoaderForm.cs</DependentUpon>
     </Compile>
     <Compile Include="UpdateCheck.cs" />
+    <Compile Include="AfxRgbaLutControl.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="AfxRgbaLutControl.Designer.cs">
+      <DependentUpon>AfxRgbaLutControl.cs</DependentUpon>
+    </Compile>
+    <EmbeddedResource Include="AfxRgbaLutControl.resx">
+      <DependentUpon>AfxRgbaLutControl.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="ErrorDialogue.resx">
       <DependentUpon>ErrorDialogue.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="AfxRgbaLutVoronoiGenerator.resx">
+      <DependentUpon>AfxRgbaLutVoronoiGenerator.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="LaunchCsgoForm.resx">
       <DependentUpon>LaunchCsgoForm.cs</DependentUpon>
@@ -160,6 +180,7 @@
     <EmbeddedResource Include="Tools\CustomLoaderForm.resx">
       <DependentUpon>CustomLoaderForm.cs</DependentUpon>
     </EmbeddedResource>
+    <None Include="packages.config" />
     <None Include="Properties\Settings.settings">
       <Generator>SettingsSingleFileGenerator</Generator>
       <LastGenOutput>Settings.Designer.cs</LastGenOutput>
@@ -194,6 +215,7 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="app.ico" />
+    <None Include="xgettext-files.txt" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="Resources\" />

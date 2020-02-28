@@ -1,11 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
+using System.Runtime.Serialization;
 using System.Windows.Forms;
-
-using injector;
 
 namespace AfxGui
 {
@@ -15,13 +13,11 @@ namespace AfxGui
 
         public static bool Load(GetHookPathDelegate getHookPath, string programPath, string cmdLine, string environment = null, bool showErrorMessage = true)
         {
-           return Load(new GetHookPathDelegate[] { getHookPath }, programPath, cmdLine, environment, showErrorMessage);
+            return Load(new GetHookPathDelegate[] { getHookPath }, programPath, cmdLine, environment, showErrorMessage);
         }
 
         public static bool Load(IEnumerable<GetHookPathDelegate> getHookPathCollection, string programPath, string cmdLine, string environment = null, bool showErrorMessage = true)
         {
-            bool bOk = true;
-
             try
             {
                 string programOptions = "\"" + programPath + "\" " + cmdLine;
@@ -50,7 +46,7 @@ namespace AfxGui
                     , ref startupInfo
                     , out processInfo)
                     )
-                    throw new System.ApplicationException("Failed to launch program, error code: " + Marshal.GetLastWin32Error());
+                    throw HlaeErrors.LoaderCreateProcessException(Marshal.GetLastWin32Error());
 
                 try
                 {
@@ -62,29 +58,127 @@ namespace AfxGui
 
                         using (System.Diagnostics.Process injector = new System.Diagnostics.Process())
                         {
-
                             injector.StartInfo.UseShellExecute = false;
                             injector.StartInfo.FileName = System.AppDomain.CurrentDomain.BaseDirectory + (isProcess64Bit ? "\\x64" : "") + "\\injector.exe";
                             injector.StartInfo.CreateNoWindow = true;
-                            injector.StartInfo.Arguments = processInfo.dwProcessId.ToString() + " " + hookPath;
+                            injector.StartInfo.RedirectStandardInput = true;
+                            injector.StartInfo.RedirectStandardOutput = true;
 
                             try
                             {
                                 injector.Start();
                             }
-                            catch(Exception e)
+                            catch (Exception e)
                             {
                                 throw HlaeErrors.InjectorStartException(
                                     injector.StartInfo.FileName,
                                     e
-                               );
+                                );
                             }
 
-                            injector.WaitForExit();
+                            AfxError error = null;
 
-                            if (0 != injector.ExitCode)
+                            IFormatter formatter = new advancedfx.injector.interop.Formatter();
+
+                            using (Stream injectorIn = injector.StandardInput.BaseStream)
                             {
-                                throw InjectorErrors.Instance.GetById(injector.ExitCode);
+                                using (Stream injectorOut = injector.StandardOutput.BaseStream)
+                                {
+                                    advancedfx.injector.interop.InjectMessage injectMessage = new advancedfx.injector.interop.InjectMessage();
+                                    injectMessage.ProcessId = processInfo.dwProcessId;
+                                    injectMessage.DllPath = hookPath;
+
+                                    formatter.Serialize(injectorIn, injectMessage);
+                                    injectorIn.Flush();
+
+                                    bool injectorExit = false;
+
+                                    while (!injectorExit)
+                                    {
+                                        advancedfx.injector.interop.ProcessMessage m = (advancedfx.injector.interop.ProcessMessage)formatter.Deserialize(injectorOut);
+
+                                        switch (m)
+                                        {
+                                            case advancedfx.injector.interop.ExceptionError exceptionError:
+                                                if(null == error) error = HlaeErrors.Unknown;
+                                                break;
+                                            case advancedfx.injector.interop.OpenProcessError openProcessError:
+                                                if (null == error) error = HlaeErrors.OpenProcessFailed;
+                                                break;
+                                            case advancedfx.injector.interop.VirtualAllocExArgDllDirError virtualAllocExArgDllDirError:
+                                                if (null == error) error = HlaeErrors.VirtualAllocExReadWriteFailed;
+                                                break;
+                                            case advancedfx.injector.interop.VirtualAllocExArgDllFilePathError virtualAllocExArgDllFilePathError:
+                                                if (null == error) error = HlaeErrors.VirtualAllocExReadWriteFailed;
+                                                break;
+                                            case advancedfx.injector.interop.GetImageError getImageError:
+                                                if (null == error) error = HlaeErrors.GetImageFailed;
+                                                break;
+                                            case advancedfx.injector.interop.VirtualAllocExImageError virtualAllocExImageError:
+                                                if (null == error) error = HlaeErrors.VirtualAllocExReadWriteExecuteFailed;
+                                                break;
+                                            case advancedfx.injector.interop.WriteProcessMemoryArgDllDirError writeProcessMemoryArgDllDirError:
+                                                if (null == error) error = HlaeErrors.WriteProcessMemoryFailed;
+                                                break;
+                                            case advancedfx.injector.interop.WriteProcessMemoryArgDllFilePathError writeProcessMemoryArgDllFilePathError:
+                                                if (null == error) error = HlaeErrors.WriteProcessMemoryFailed;
+                                                break;
+                                            case advancedfx.injector.interop.WriteProcessMemoryImageError writeProcessMemoryImageError:
+                                                if (null == error) error = HlaeErrors.WriteProcessMemoryFailed;
+                                                break;
+                                            case advancedfx.injector.interop.FlushInstructionCacheError flushInstructionCacheError:
+                                                if (null == error) error = HlaeErrors.FlushInstructionCacheFailed;
+                                                break;
+                                            case advancedfx.injector.interop.CreateRemoteThreadError createRemoteThreadError:
+                                                if (null == error) error = HlaeErrors.CreateRemoteThreadFailed;
+                                                break;
+                                            case advancedfx.injector.interop.ContinueWaitingQuestion contineWaitingQuestion:
+                                                {
+                                                    advancedfx.injector.interop.ContinueWaiting r = new advancedfx.injector.interop.ContinueWaiting();
+                                                    r.Response = DialogResult.Yes == MessageBox.Show(L10n._("Image injection problem.\nContinue waiting?"), L10n._("injector Warning"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+                                                    formatter.Serialize(injectorIn, r);
+                                                    injectorIn.Flush();
+                                                }
+                                                break;
+                                            case advancedfx.injector.interop.TerminateThreadError terminateThreadError:
+                                                // ignore for now
+                                                break;
+                                            case advancedfx.injector.interop.GetExitCodeThreadError getExitCodeThreadError:
+                                                // ignore for now
+                                                break;
+                                            case advancedfx.injector.interop.InvalidExitCodeError invalidExitCodeError:
+                                                if (null == error) error = InjectorErrors.AfxHookUnknown;
+                                                break;
+                                            case advancedfx.injector.interop.KnownExitCodeError knownExitCodeError:
+                                                if (null == error) error = InjectorErrors.Instance.GetById((int)knownExitCodeError.ThreadExitCode);
+                                                break;
+                                            case advancedfx.injector.interop.CloseHandleThreadError closeHandleError:
+                                                // ignore for now
+                                                break;
+                                            case advancedfx.injector.interop.VirtualFreeExImageError virtualFreeExImageError:
+                                                // ignore for now
+                                                break;
+                                            case advancedfx.injector.interop.VirtualFreeExArgFilePathError virtualFreeExArgFilePathError:
+                                                // ignore for now
+                                                break;
+                                            case advancedfx.injector.interop.VirtualFreeExArgDllDirError virtualFreeExArgDllDirError:
+                                                // ignore for now
+                                                break;
+                                            case advancedfx.injector.interop.CloseHandleProcessError closeHandleProcessError:
+                                                // ignore for now
+                                                break;
+                                            case advancedfx.injector.interop.InjectResponse injectResponse:
+                                                bool injectorOk = injectResponse.Response;
+                                                injector.WaitForExit();
+                                                if (!injectorOk) throw null == error ? HlaeErrors.Unknown : error;
+                                                injectorExit = true;
+                                                break;
+                                            default:
+                                                throw HlaeErrors.Unknown;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -100,6 +194,19 @@ namespace AfxGui
                     CloseHandle(processInfo.hProcess);
                 }
             }
+            catch(AfxError e)
+            {
+                if (showErrorMessage)
+                {
+                    using (ErrorDialogue frm = new ErrorDialogue())
+                    {
+                        frm.Error = e;
+                        frm.ShowDialog();
+                    }
+                }
+
+                return false;
+            }
             catch(Exception e)
             {
                 if(showErrorMessage)
@@ -114,7 +221,7 @@ namespace AfxGui
                 return false;
             }
 
-            return bOk;
+            return true;
         }
 
         private const uint CREATE_SUSPENDED = 0x00000004;
@@ -201,7 +308,7 @@ namespace AfxGui
             IntPtr hKernel32Dll = GetModuleHandle("Kernel32.dll");
 
             if (IntPtr.Zero == hKernel32Dll)
-                throw new ApplicationException("Can not get Kernel32.dll handle.");
+                throw new ApplicationException(L10n._("Can not get Kernel32.dll handle."));
 
             m_HasIsWow64Process = IntPtr.Zero != GetProcAddress(hKernel32Dll, "IsWow64Process");
         }
@@ -214,7 +321,7 @@ namespace AfxGui
             bool wow64Process;
 
             if (!IsWow64Process(hProcess, out wow64Process))
-                throw new ApplicationException("IsWow64Process failed, error code: " + Marshal.GetLastWin32Error());
+                throw new ApplicationException(L10n._("IsWow64Process failed, error code: {0}", Marshal.GetLastWin32Error()));
 
             return !(wow64Process || !Environment.Is64BitOperatingSystem);
         }

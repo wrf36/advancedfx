@@ -8,14 +8,14 @@
 #include <list>
 #include <sstream>
 
-#include <shared/detours.h>
+#include <shared/AfxDetours.h>
 #include <shared/FileTools.h>
 #include <shared/StringTools.h>
 #include <shared/RawOutput.h>
 
 #include <hlsdk.h>
-#include <shared/halflife/common/r_studioint.h>
-#include <shared/halflife/common/demo_api.h>
+#include <deps/release/halflife/common/r_studioint.h>
+#include <deps/release/halflife/common/demo_api.h>
 
 #include "hooks/user32Hooks.h"
 #include "hooks/hw/Mod_LeafPvs.h"

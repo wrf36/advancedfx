@@ -6,6 +6,82 @@
 
 <release>
 <name>AfxHookSource</name>
+<version>1.75.0</version>
+<time>2020-02-28T08:45Z</time>
+<changes>
+<change type="updated">
+Updated / changed many internal aspects mirv_streams to accommodate the latest CS:GO updates.
+</change>
+<change type="added">
+Added match options className, isPlayer, teamNumber to mirv_streams edit streamNameHere actionFilter addEx.
+</change>
+<change type="updated">
+Updated afx/wh.cfg accordingly.
+</change>
+</changes>
+<comments>Please give us feedback on Twitter or Discord if the FPS / performace of mirv_streams is about the same, changed notably and if it changed notably in which way. Also in case you notice memory leaks that weren't there before, please notify us.</comments>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.74.0</version>
+<time>2020-02-18T18:18Z</time>
+<changes>
+<change type="updated">
+Solved #267 wh stream getting blurred when sg553 us zoomed.
+</change>
+<change type="updated">
+Some hopefully transparent plumbing to make mirv_campath more unified for AfxHookGoldSrc.
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.73.0</version>
+<time>2020-01-30T15:45Z</time>
+<changes>
+<change type="added">
+Added mirv_deathmsg showNumbers 0|1|2 - Default (0), numbers (1), prepend numbers (2).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.72.1</version>
+<time>2020-01-06T18:43Z</time>
+<changes>
+<change type="fixed">
+Fixed AGR files created being broken due to bug (undefined C++ std library / compiler behavior).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.72.0</version>
+<time>2019-12-30T18:34Z</time>
+<changes>
+<change type="updated">
+Added 1:1 sample aspect ratio (SAR) info to default ffmpeg video filter params (now: -vf vflip,setsar=sar=1/1), fixes #252 weird video resolution recording with ffmpeg (wrong resolution for video programs defaulting to non square SAR).
+</change>
+<change type="updated">
+Breaking change: For ffmpeg presets {AFX_STREAM_PATH} does not contain a trailing backslash anymore! (Also default ffmpeg presets have been adjusted to include \\ which means \.)
+</change>
+<change type="updated">
+Recompiled with latest Visual Studio 16.4.2 and packaged with latest CRT - now requires at least Windows 7. (Windows XP is not supported anymore.)
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
 <version>1.71.0</version>
 <time>2019-11-19T04:00Z</time>
 <changes>
@@ -16,7 +92,6 @@ Adjusted to CS:GO 11/18/2019 (11/19/2019 UTC) update: <br />
 </change>
 </changes>
 </release>
-
 
 
 <release>

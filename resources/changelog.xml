@@ -6,6 +6,115 @@
 
 <release>
 <name>HLAE</name>
+<version>2.86.0</version>
+<time>2020-02-28T08:45Z</time>
+<changes>
+<change type="updated">
+Included AfxHookSource 1.75.0 (2020-02-28T08:45Z).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.85.0</version>
+<time>2020-02-18T18:18Z</time>
+<changes>
+<change type="updated">
+Included AfxHookSource 1.74.0 (2020-02-18T18:18Z).
+</change>
+<change type="updated">
+Included AfxHookGoldSrc 2.6.6 (2020-02-18T18:18Z).
+</change>
+</changes>
+</release>
+
+
+
+<release>
+<name>HLAE</name>
+<version>2.84.3</version>
+<time>2020-02-01T21:17Z</time>
+<changes>
+<change type="fixed">
+Fixed installer failing for non-translated languages.
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.84.1</version>
+<time>2020-01-30T19:55Z</time>
+<changes>
+<change type="fixed">
+Fixed injector popping up unwanted developer test messages.
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.84.0</version>
+<time>2020-01-30T15:45Z</time>
+<changes>
+<change type="updated">
+Included AfxHookSource 1.73.0 (2020-01-30T15:45Z).
+</change>
+<change type="added">
+Added translations of installer and most of HLAE.exe GUI by the generous translators: https://l10n.advancedfx.org/projects/l10n/contributors/
+</change>
+<change type="added">
+Added a help / guide button at the bottom of the GUI.
+</change>
+<change type="added">
+Added possible solutions to more error codes.
+</change>
+<change type="updated">
+Other: https://github.com/advancedfx/advancedfx/milestone/14?closed=1
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.83.1</version>
+<time>2020-01-06T18:43Z</time>
+<changes>
+<change type="updated">
+Included AfxHookSource 1.72.1 (2020-01-06T18:43Z).
+</change>
+<change type="updated">
+Improve zh-CN translation (by Purple-CSGO).
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.83.0</version>
+<time>2019-12-30T18:34Z</time>
+<changes>
+<change type="updated">
+Included AfxHookSource 1.72.0 (2019-12-30T18:34Z).
+</change>
+<change type="updated">
+Included AfxHookGoldSrc 2.6.5 (2019-12-30T17:57Z).
+</change>
+<change type="updated">
+Recompiled with latest Visual Studio 16.4.2 and packaged with latest CRT - now requires at least Windows 7. (Windows XP is not supported anymore.)
+</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
 <version>2.82.0</version>
 <time>2019-11-19T04:00Z</time>
 <changes>

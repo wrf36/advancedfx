@@ -3,10 +3,10 @@
 #include "R_DrawSkyBoxEx.h"
 
 #include <hl_addresses.h>
-#include <shared/detours.h>
+#include <shared/AfxDetours.h>
 
 #include <Windows.h>
-#include <shared/Detours/src/detours.h>
+#include <deps/release/Detours/src/detours.h>
 
 typedef void (*R_DrawSkyBoxEx_t) (void);
 R_DrawSkyBoxEx_t g_Old_R_DrawSkyBoxEx = 0;

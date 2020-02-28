@@ -6,9 +6,9 @@
 #include "../hlaeFolder.h"
 #include "AfxCommandLine.h"
 
-#include <shared/detours.h>
+#include <shared/AfxDetours.h>
 #include <Windows.h>
-#include <shared/Detours/src/detours.h>
+#include <deps/release/Detours/src/detours.h>
 
 #include <string>
 

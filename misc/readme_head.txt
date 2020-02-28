@@ -75,6 +75,11 @@ NASM
 RapidXml
 	http://rapidxml.sourceforge.net/
 	License: ./LICENSES/rapidxml/license.txt
+	
+Sebastien BLAISOT
+	For wxl-po-tools.
+	(Used by developers to build installer translations.
+	https://github.com/sblaisot/wxl-po-tools
 
 SharpDX
 	For the SharpDX SDK
@@ -84,6 +89,10 @@ SharpDX
 Valve
 	For various SDKs.
 	https://www.valvesoftware.com/
+
+Vitalii Tsilnyk
+	For NGettext.
+	https://github.com/VitaliiTsilnyk/NGettext
 
 WiX Toolset
 	For installer authoring software.

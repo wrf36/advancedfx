@@ -8,6 +8,7 @@
 #include "WrpConsole.h"
 #include "AfxShaders.h"
 #include "csgo_Stdshader_dx9_Hooks.h"
+#include "csgo_Stdshader_dx9_Hooks.h"
 #include "CamIO.h"
 #include "MatRenderContextHook.h"
 #include "AfxImageBuffer.h"
@@ -15,6 +16,7 @@
 #include "AfxWriteFileLimiter.h"
 #include "AfxThreadedRefCounted.h"
 #include "MirvCalcs.h"
+#include "d3d9Hooks.h"
 
 #define AFX_SHADERS_CSGO 0
 
@@ -31,6 +33,7 @@
 #endif
 
 #include <shared/bvhexport.h>
+#include <shared/AfxColorLut.h>
 
 #include <cctype>
 
@@ -45,8 +48,8 @@
 #include <mutex>
 #include <condition_variable>
 
-typedef void(__stdcall * CCSViewRender_Render_t)(void * this_ptr, const SOURCESDK::vrect_t_csgo * rect);
-typedef void(__stdcall * CCSViewRender_RenderView_t)(void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw);
+//typedef void(__fastcall * CCSViewRender_Render_t)(void * This, void* Edx, const SOURCESDK::vrect_t_csgo * rect);
+typedef void(__fastcall* CCSViewRender_RenderView_t)(void * This, void* Edx, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw);
 
 class CAfxStreams;
 
@@ -80,15 +83,17 @@ public:
 
 	//virtual void Viewport(int x, int y, int width, int height) = 0;
 
-	virtual SOURCESDK::IMaterial_csgo * MaterialHook(SOURCESDK::IMaterial_csgo * material, void * proxyData) = 0;
+	virtual SOURCESDK::IMaterial_csgo * MaterialHook(IAfxMatRenderContext* ctx, SOURCESDK::IMaterial_csgo * material, void * proxyData) = 0;
 
-	virtual void DrawInstances(int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance) = 0;
+	virtual void DrawInstances(IAfxMatRenderContext* ctx, int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance) = 0;
 
 	virtual void Draw(IAfxMesh * am, int firstIndex = -1, int numIndices = 0) = 0;
 
 	virtual void Draw_2(IAfxMesh * am, SOURCESDK::CPrimList_csgo *pLists, int nLists) = 0;
 
 	virtual void DrawModulated(IAfxMesh * am, const SOURCESDK::Vector4D_csgo &vecDiffuseModulation, int firstIndex = -1, int numIndices = 0) = 0;
+
+	virtual void UnlockMesh(IAfxMesh* am, int numVerts, int numIndices, SOURCESDK::MeshDesc_t_csgo& desc) = 0;
 
 	/// <remarks>
 	/// This is a good chance for an implmentation
@@ -497,7 +502,7 @@ public:
 	//
 	// State information:
 
-	virtual void OnRenderBegin(IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky)
+	virtual void OnRenderBegin(IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky, const std::list<SOURCESDK::CSGO::CBaseHandle>& deletedEnts)
 	{
 		m_EngineThreadStream = this;
 	}
@@ -1048,28 +1053,27 @@ class CAfxBaseFxStream
 : public CAfxRenderViewStream
 {
 public:
+	struct CEntityData
+	{
+		const char* ClassName;
+		bool IsPlayer;
+		int TeamNumber;
+
+		bool operator==(const CEntityData& other) const
+		{
+			return
+				IsPlayer == other.IsPlayer
+				&& TeamNumber == other.TeamNumber;
+		}
+	};
+
 	struct CEntityInfo
 	{
 		SOURCESDK::CSGO::CBaseHandle Handle;
-
-		bool operator== (const CEntityInfo &y) const
-		{
-			return Handle == y.Handle;
-		}
-
-		bool operator!= (const CEntityInfo &y) const
-		{
-			return Handle != y.Handle;
-		}
-
-		bool operator< (const CEntityInfo & y) const
-		{
-			return Handle < y.Handle;
-		}
-
-
+		CEntityData Data;
 	};
 
+public:
 	class CActionKey
 	{
 	public:
@@ -1116,6 +1120,8 @@ public:
 		{
 		}
 
+		virtual void Console_Edit(IWrpCommandArgs* args);
+
 		int GetRefCount(void)
 		{
 			return m_RefCount;
@@ -1158,11 +1164,11 @@ public:
 		{
 		}
 
-		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, CAfxTrackedMaterial * trackedMaterial);
+		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, IAfxMatRenderContext* ctx, CAfxTrackedMaterial * trackedMaterial);
 
-		virtual void DrawInstances(CAfxBaseFxStreamContext * ch, int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance )
+		virtual void DrawInstances(CAfxBaseFxStreamContext * ch, IAfxMatRenderContext* ctx, int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance )
 		{
-			ch->GetCtx()->GetOrg()->DrawInstances(nInstanceCount, pInstance);
+			ctx->GetOrg()->DrawInstances(nInstanceCount, pInstance);
 		}
 
 		virtual void Draw(CAfxBaseFxStreamContext * ch, IAfxMesh * am, int firstIndex = -1, int numIndices = 0)
@@ -1178,6 +1184,11 @@ public:
 		virtual void DrawModulated(CAfxBaseFxStreamContext * ch, IAfxMesh * am, const SOURCESDK::Vector4D_csgo &vecDiffuseModulation, int firstIndex = -1, int numIndices = 0 )
 		{
 			am->GetParent()->DrawModulated(vecDiffuseModulation, firstIndex, numIndices);
+		}
+
+		virtual void UnlockMesh(CAfxBaseFxStreamContext* ch, IAfxMesh* am, int numVerts, int numIndices, SOURCESDK::MeshDesc_t_csgo& desc)
+		{
+			am->GetParent()->UnlockMesh(numVerts, numIndices, desc);
 		}
 
 #if AFX_SHADERS_CSGO
@@ -1220,6 +1231,12 @@ public:
 		m_Shared.Console_AddReplaceAction(args);
 	}
 
+	static void Console_AddGlowColorMapAction(IWrpCommandArgs* args)
+	{
+		m_Shared.Console_AddGlowColorMapAction(args);
+	}
+
+
 	static CAction * GetAction(CActionKey const & key)
 	{
 		return m_Shared.GetAction(key);
@@ -1237,7 +1254,7 @@ public:
 
 	static void MainThreadInitialize(void);
 
-	virtual void OnRenderBegin(IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky) override;
+	virtual void OnRenderBegin(IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky, const std::list<SOURCESDK::CSGO::CBaseHandle> & deletedEnts) override;
 
 	virtual void OnRenderEnd(void) override;
 
@@ -1254,7 +1271,7 @@ public:
 
 	virtual void LevelShutdown(void);
 
-	CAction * RetrieveAction(CAfxTrackedMaterial * tackedMaterial, const CEntityInfo & currentEntity);
+	CAction * RetrieveAction(CAfxTrackedMaterial * trackedMaterial, const CEntityInfo & currentEntity);
 
 	CAction * ClientEffectTexturesAction_get(void);
 	void ClientEffectTexturesAction_set(CAction * value);
@@ -1393,11 +1410,11 @@ public:
 	bool DebugPrint_get(void);
 	void DebugPrint_set(bool value);
 
-	void InvalidateMap(void);
-
 	void Picker_Pick(bool pickEntityNotMaterial, bool wasVisible);
 	void Picker_Stop(void);
 	void Picker_Print(void);
+
+	void InvalidateMap();
 
 	/*
 	/// <pram name="to24">false: depth24 to depth; true: depth to depth24</param>
@@ -1423,16 +1440,13 @@ protected:
 
 		void Console_ListActions(void);
 		void Console_AddReplaceAction(IWrpCommandArgs * args);
+		void Console_AddGlowColorMapAction(IWrpCommandArgs* args);
 		CAction * GetAction(CActionKey const & key);
 		bool RemoveAction(CActionKey const & key);
 
 		void MainThreadInitialize(void);
 
 		void LevelShutdown(void);
-
-		CAfxBaseFxStreamContext * RequestStreamContext(void);
-		void ReturnStreamContext(CAfxBaseFxStreamContext * streamContext);
-
 
 		CAction * DrawAction_get(void);
 		CAction * NoDrawAction_get(void);
@@ -1445,9 +1459,6 @@ protected:
 		CAction * BlackAction_get(void);
 	
 	private:
-		std::mutex m_StreamContextsMutex;
-		std::queue<CAfxBaseFxStreamContext *> m_StreamContexts;
-
 		int m_RefCount = 0;
 		int m_MainThreadInitalizeLevel = 0;
 		int m_ShutDownLevel = 0;
@@ -1598,9 +1609,9 @@ private:
 		{
 		}
 
-		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch);
+		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch) override;
 
-		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, CAfxTrackedMaterial * trackedMaterial);
+		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, IAfxMatRenderContext* ctx, CAfxTrackedMaterial * trackedMaterial) override;
 
 /*		We could speed up a bit here, but I am not sure if it's safe to do this,
         so we just let it draw for now and block the drawing instead.
@@ -1636,9 +1647,9 @@ private:
 		{
 		}
 
-		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch);
+		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch) override;
 
-		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, CAfxTrackedMaterial * trackedMaterial);
+		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, IAfxMatRenderContext* ctx, CAfxTrackedMaterial * trackedMaterial) override;
 	};
 
 	class CActionDraw
@@ -1650,10 +1661,10 @@ private:
 		{
 		}
 
-		virtual bool CheckIsCompatible(CAfxTrackedMaterial * tackedMaterial)
-		{
-			return true;
-		}
+		//virtual bool CheckIsCompatible(CAfxTrackedMaterial * tackedMaterial)
+		//{
+		//	return true;
+		//}
 	};
 
 #if AFX_SHADERS_CSGO
@@ -1764,7 +1775,7 @@ private:
 #endif
 
 	class CActionReplace
-	: public CAction
+	: public CAction, public ID3d9HooksModulationColorBlendOverride
 	{
 	public:
 		CActionReplace(
@@ -1795,11 +1806,11 @@ private:
 
 		virtual void MainThreadInitialize(void);
 
-		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch);
+		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch) override;
 
-		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, CAfxTrackedMaterial * trackedMaterial);
+		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, IAfxMatRenderContext* ctx, CAfxTrackedMaterial * trackedMaterial) override;
 
- 		virtual void DrawInstances(CAfxBaseFxStreamContext * ch, int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance )
+ 		virtual void DrawInstances(CAfxBaseFxStreamContext * ch, IAfxMatRenderContext* ctx, int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance ) override
 		{
 			if(m_OverrideColor || m_OverrideBlend)
 			{
@@ -1822,8 +1833,18 @@ private:
 				}
 			}
  
-			ch->GetCtx()->GetOrg()->DrawInstances(nInstanceCount, pInstance); 
-		} 
+			ctx->GetOrg()->DrawInstances(nInstanceCount, pInstance); 
+		}
+
+		void ID3d9HooksModulationColorBlendOverride::D3d9HooksModulationColorBlendOverride(float color[4]) {
+			if (m_OverrideColor) {
+				color[0] = m_Color[0]; color[1] = m_Color[1]; color[2] = m_Color[2];
+			}
+			
+			if (m_OverrideBlend) {
+				color[3] = m_Blend;
+			}
+		}
 
 	protected:
 		virtual ~CActionReplace();
@@ -1843,6 +1864,66 @@ private:
 		void ExamineMaterial(SOURCESDK::IMaterial_csgo *, bool & outSplinetype, bool & outUseinstancing);
 	};
 
+	// Todo: Speed up with cubetrees.
+	class CActionGlowColorMap
+		: public CAction
+		, public ID3d9HooksModulationColorBlendOverride
+	{
+	public:
+		virtual void Console_Edit(IWrpCommandArgs* args) override;
+
+		virtual void AfxUnbind(CAfxBaseFxStreamContext* ch) override;
+
+		virtual void MaterialHook(CAfxBaseFxStreamContext* ch, IAfxMatRenderContext* ctx, CAfxTrackedMaterial* trackedMaterial) override;
+
+		virtual void UnlockMesh(CAfxBaseFxStreamContext* ch, IAfxMesh* am, int numVerts, int numIndices, SOURCESDK::MeshDesc_t_csgo& desc) override;
+
+		void ID3d9HooksModulationColorBlendOverride::D3d9HooksModulationColorBlendOverride(float color[4]) override {
+
+			if (m_DebugColor)
+			{
+				color[3] = 1;
+			}
+			else
+			{
+				RemapColor(color[0], color[1], color[2], color[3]);
+			}
+		}
+
+
+	protected:
+		virtual ~CActionGlowColorMap();
+
+	private:
+
+		struct CRecentEntry
+		{
+			int Count;
+			CAfxColorLut::CRgba Result;
+
+			CRecentEntry(const CAfxColorLut::CRgba & result)
+				: Count(1)
+				, Result(result)
+			{
+			}
+
+			CRecentEntry(const CRecentEntry& other)
+				: Count(other.Count)
+				, Result(other.Result)
+			{
+			}
+		};
+
+		std::shared_timed_mutex m_EditMutex;
+		bool m_DebugColor = false;
+		std::queue<CAfxColorLut::CRgba> m_Queue;
+		std::map<CAfxColorLut::CRgba, CRecentEntry> m_Cache;
+		CAfxColorLut* m_AfxColorLut = nullptr;
+
+		void RemapColor(float& r, float& g, float& b, float &a); 
+
+	};
+
 	class CActionDebugDepth
 	: public CAction
 	{
@@ -1855,7 +1936,7 @@ private:
 
 		virtual void AfxUnbind(CAfxBaseFxStreamContext * ch);
 
-		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, CAfxTrackedMaterial * trackedMaterial);
+		virtual void MaterialHook(CAfxBaseFxStreamContext * ch, IAfxMatRenderContext* ctx, CAfxTrackedMaterial * trackedMaterial) override;
 
 	protected:
 		~CActionDebugDepth();
@@ -1963,22 +2044,36 @@ private:
 		};
 
 		CActionFilterValue()
-		: m_UseHandle(false)
-		, m_IsErrorMaterial(TS_DontCare)
-		, m_MatchAction(0)
+			: m_UseHandle(false)
+			, m_UseClassName(false)
+			, m_UseIsPlayer(false)
+			, m_UseTeamNumber(false)
+			, m_IsErrorMaterial(TS_DontCare)
+			, m_MatchAction(0)
 		{
 		}
 
 		CActionFilterValue(
 			bool useHandle,
 			SOURCESDK::CSGO::CBaseHandle handle,
-			char const * name,
-			char const * textureGroupName,
-			char const * shaderName,
+			const char* className,
+			bool useIsPlayer,
+			bool isPlayer,
+			bool useTeamNumber,
+			int teamNumber,
+			char const* name,
+			char const* textureGroupName,
+			char const* shaderName,
 			TriState isErrorMaterial,
-			CAction * matchAction)
+			CAction* matchAction)
 			: m_UseHandle(useHandle)
 			, m_Handle(handle)
+			, m_UseClassName(0 != strcmp(className, "\\*"))
+			, m_ClassName(className)
+			, m_UseIsPlayer(useIsPlayer)
+			, m_IsPlayer(isPlayer)
+			, m_UseTeamNumber(useTeamNumber)
+			, m_TeamNumber(teamNumber)
 			, m_Name(name)
 			, m_TextureGroupName(textureGroupName)
 			, m_ShaderName(shaderName)
@@ -1991,6 +2086,12 @@ private:
 		CActionFilterValue(char const * matchString, CAction * matchAction)
 		: m_UseHandle(false)
 		, m_Handle()
+		, m_UseClassName(false)
+		, m_ClassName("\\*")
+		, m_UseIsPlayer(false)
+		, m_IsPlayer(false)
+		, m_UseTeamNumber(false)
+		, m_TeamNumber(0)
 		, m_Name(matchString)
 		, m_TextureGroupName("\\*")
 		, m_ShaderName("\\*")
@@ -2003,6 +2104,12 @@ private:
 		CActionFilterValue(const CActionFilterValue & x)
 		: m_UseHandle(x.m_UseHandle)
 		, m_Handle(x.m_Handle)
+		, m_UseClassName(x.m_UseClassName)
+		, m_ClassName(x.m_ClassName)
+		, m_UseIsPlayer(x.m_UseIsPlayer)
+		, m_IsPlayer(x.m_IsPlayer)
+		, m_UseTeamNumber(x.m_UseTeamNumber)
+		, m_TeamNumber(x.m_TeamNumber)
 		, m_Name(x.m_Name)
 		, m_TextureGroupName(x.m_TextureGroupName)
 		, m_ShaderName(x.m_ShaderName)
@@ -2023,6 +2130,12 @@ private:
 
 			this->m_UseHandle = x.m_UseHandle;
 			this->m_Handle = x.m_Handle;
+			this->m_UseClassName = x.m_UseClassName;
+			this->m_ClassName = x.m_ClassName;
+			this->m_UseIsPlayer = x.m_UseIsPlayer;
+			this->m_IsPlayer = x.m_IsPlayer;
+			this->m_UseTeamNumber = x.m_UseTeamNumber;
+			this->m_TeamNumber = x.m_TeamNumber;
 			this->m_Name = x.m_Name;
 			this->m_TextureGroupName = x.m_TextureGroupName;
 			this->m_ShaderName = x.m_ShaderName;
@@ -2038,20 +2151,29 @@ private:
 
 		void Console_Print(int id)
 		{
-			std::string handleStr("(don't care)");
+			std::string handleStr("\\*");
+			std::string teamNumberStr("\\*");
 
 			if (m_UseHandle)
 			{
 				handleStr = std::to_string(m_Handle.ToInt());
 			}
 
-			Tier0_Msg("id=%i, \"handle=%s\",\"name=%s\", \"textureGroup=%s\", \"shader=%s\", \"isErrrorMaterial=%s\", \"action=%s\"\n",
+			if (m_UseTeamNumber)
+			{
+				teamNumberStr = std::to_string(m_TeamNumber);
+			}
+
+			Tier0_Msg("id=%i, \"handle=%s\",\"name=%s\", \"textureGroup=%s\", \"shader=%s\", \"isErrrorMaterial=%s\",  \"className=%s\", \"isPlayer=%s\", \"teamNumber=%s\", \"action=%s\"\n",
 				id,
 				handleStr.c_str(),
 				m_Name.c_str(),
 				m_TextureGroupName.c_str(),
 				m_ShaderName.c_str(),
-				m_IsErrorMaterial == TS_True ? "1" : (m_IsErrorMaterial == TS_False ? "0" : "(don't care)"),
+				m_IsErrorMaterial == TS_True ? "1" : (m_IsErrorMaterial == TS_False ? "0" : "\\*"),
+				m_ClassName.c_str(),
+				m_UseIsPlayer ? (m_IsPlayer ? "1" : "0") : "\\*",
+				teamNumberStr.c_str(),
 				m_MatchAction ? m_MatchAction->Key_get().m_Name.c_str() : "(null)"
 			);
 		}
@@ -2063,7 +2185,7 @@ private:
 
 		bool GetUseEntity(void)
 		{
-			return m_UseHandle;
+			return m_UseHandle || m_UseClassName || m_UseIsPlayer || m_UseTeamNumber;
 		}
 
 		bool CalcMatch_Material(CAfxTrackedMaterial * trackedMaterial);
@@ -2073,7 +2195,12 @@ private:
 	private:
 		bool m_UseHandle;
 		SOURCESDK::CSGO::CBaseHandle m_Handle;
+		bool m_UseClassName;
 		std::string m_ClassName;
+		bool m_UseIsPlayer;
+		bool m_IsPlayer;
+		bool m_UseTeamNumber;
+		int m_TeamNumber;
 		std::string m_Name;
 		std::string m_TextureGroupName;
 		std::string m_ShaderName;
@@ -2081,17 +2208,47 @@ private:
 		CAction * m_MatchAction;
 	};
 
+	class CAfxBaseFxStreamData
+	{
+	public:
+		CAfxBaseFxStreamData()
+		{
+		}
+
+		CAfxBaseFxStreamData(IAfxBasefxStreamModifier* modifier, const AfxViewportData_t& viewport, const SOURCESDK::VMatrix& projectionMatrix, const SOURCESDK::VMatrix& projectionMatrixSky, const std::list<SOURCESDK::CSGO::CBaseHandle>& deletedEnts, bool invalidateMap)
+			: Modifier(modifier)
+			, Viewport(viewport)
+			, ProjectionMatrix(projectionMatrix)
+			, ProjectionMatrixSky(projectionMatrixSky)
+			, DeletedEntities(deletedEnts)
+			, InvalidateMap(invalidateMap)
+		{
+		}
+
+		AfxViewportData_t Viewport;
+		SOURCESDK::VMatrix ProjectionMatrix;
+		SOURCESDK::VMatrix ProjectionMatrixSky;
+		IAfxBasefxStreamModifier* Modifier;
+		std::list<SOURCESDK::CSGO::CBaseHandle> DeletedEntities;
+		bool InvalidateMap;
+	} m_Data;
+
 	class CAfxBaseFxStreamContext
 		: public IAfxStreamContext
 	{
 	public:
-		CAfxBaseFxStreamContext()
+		CAfxBaseFxStreamContext(CAfxBaseFxStream * stream)
 			: m_CurrentAction(0)
+			, m_Stream(stream)
 		{
+			m_MapRleaseNotification = new CMapRleaseNotification(this);
+			m_Stream->AddRef();
 		}
 
 		~CAfxBaseFxStreamContext()
 		{
+			m_Stream->Release();
+			delete m_MapRleaseNotification;
 		}
 
 		CAfxBaseFxStream * GetStream()
@@ -2099,24 +2256,22 @@ private:
 			return m_Stream;
 		}
 
-		IAfxMatRenderContext * GetCtx()
-		{
-			return m_Ctx;
-		}
-
 		bool DrawingSkyBoxView_get(void)
 		{
 			return m_DrawingSkyBoxView;
 		}
 
-		void RenderBegin(CAfxBaseFxStream * stream, IAfxBasefxStreamModifier * modifier, const AfxViewportData_t & viewport, const SOURCESDK::VMatrix & projectionMatrix, const SOURCESDK::VMatrix & projectionMatrixSky);
-
-		void RenderEnd(void);
-
 		IAfxBasefxStreamModifier * GetModifier() const
 		{
-			return m_Modifier;
+			return GetModifier();
 		}
+
+		void InvalidateMap();
+
+		void UpdateCurrentEntity(const CEntityInfo& currentEntity);
+
+		void QueueBegin(const CAfxBaseFxStreamData& data, bool isRoot = false);
+		void QueueEnd(bool isRoot = false);
 
 		//
 		// IAfxStreamContext:
@@ -2135,15 +2290,17 @@ private:
 
 		//virtual void Viewport(int x, int y, int width, int height);
 
-		virtual SOURCESDK::IMaterial_csgo * MaterialHook(SOURCESDK::IMaterial_csgo * material, void * proxyData);
+		virtual SOURCESDK::IMaterial_csgo * MaterialHook(IAfxMatRenderContext* ctx, SOURCESDK::IMaterial_csgo * material, void * proxyData);
 
-		virtual void DrawInstances(int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance);
+		virtual void DrawInstances(IAfxMatRenderContext* ctx, int nInstanceCount, const SOURCESDK::MeshInstanceData_t_csgo *pInstance);
 
 		virtual void Draw(IAfxMesh * am, int firstIndex = -1, int numIndices = 0);
 
 		virtual void Draw_2(IAfxMesh * am, SOURCESDK::CPrimList_csgo *pLists, int nLists);
 
 		virtual void DrawModulated(IAfxMesh * am, const SOURCESDK::Vector4D_csgo &vecDiffuseModulation, int firstIndex = -1, int numIndices = 0);
+
+		virtual void UnlockMesh(IAfxMesh* am, int numVerts, int numIndices, SOURCESDK::MeshDesc_t_csgo& desc);
 
 		virtual void QueueFunctorInternal(IAfxCallQueue * aq, SOURCESDK::CSGO::CFunctor *pFunctor);
 
@@ -2154,17 +2311,21 @@ private:
 #endif
 
 	private:
+		CAfxBaseFxStreamData m_Data;
 		bool m_DrawingHud;
 		bool m_DrawingSkyBoxView;
-
+		bool m_IsNextDepth;
 		CEntityInfo m_CurrentEntity;
+
+		std::atomic<IAfxMatRenderContext *> m_RootContext = nullptr;
 
 		class CQueueBeginFunctor
 			: public CAfxFunctor
 		{
 		public:
-			CQueueBeginFunctor(CAfxBaseFxStreamContext * streamContext)
+			CQueueBeginFunctor(CAfxBaseFxStreamContext * streamContext, const CAfxBaseFxStreamData& data)
 				: m_StreamContext(streamContext)
+				, m_Data(data)
 			{
 			}
 
@@ -2172,6 +2333,7 @@ private:
 
 		private:
 			CAfxBaseFxStreamContext * m_StreamContext;
+			CAfxBaseFxStreamData m_Data;
 		};
 
 		class CQueueEndFunctor
@@ -2282,19 +2444,39 @@ private:
 		};
 
 		CAfxBaseFxStream * m_Stream;
-		IAfxMatRenderContext * m_Ctx = 0;
-		CAfxBaseFxStreamContext * m_ChildContext;
-		bool m_IsRootCtx;
 		CAfxBaseFxStream::CAction * m_CurrentAction;
 		//std::map<void *, SOURCESDK::CSGO::CBaseHandle> m_ProxyDataToEntityHandle;
-		AfxViewportData_t m_Viewport;
-		SOURCESDK::VMatrix m_ProjectionMatrix;
-		SOURCESDK::VMatrix m_ProjectionMatrixSky;
-		bool m_IsNextDepth;
-		IAfxBasefxStreamModifier * m_Modifier;
 
-		void QueueBegin();
-		void QueueEnd();
+		struct CCacheEntry
+		{
+			struct CachedData
+			{
+				CAction* Action = nullptr;
+				CEntityData Data;
+
+				CachedData()
+				{
+				}
+
+				CachedData(const CachedData& other)
+					: Action(other.Action)
+					, Data(other.Data)
+				{
+					if (Action) Action->AddRef();
+				}
+
+				~CachedData()
+				{
+					if (Action) Action->Release();
+				}
+			};
+
+			std::map<SOURCESDK::CSGO::CBaseHandle, CachedData> EntityActions;
+		};
+
+		std::mutex m_MapMutex;
+		std::map<CAfxTrackedMaterial*, CCacheEntry> m_Map;
+		std::multimap<SOURCESDK::CSGO::CBaseHandle, CCacheEntry*> m_EntCaches;
 
 		void BindAction(CAction * action)
 		{
@@ -2310,71 +2492,64 @@ private:
 			m_CurrentAction = action;
 		}
 
-		bool IfRootThenUpdateCurrentEntity();
+		class CMapRleaseNotification : public IAfxMaterialFree
+		{
+		public:
+			CMapRleaseNotification(CAfxBaseFxStreamContext * context)
+				: m_Context(context)
+			{
+			}
 
-		void UpdateCurrentEntity(const CEntityInfo & currentEntity);
+			~CMapRleaseNotification()
+			{
+				std::unique_lock<std::mutex> unique_lock(m_Context->m_MapMutex);
+
+				std::map<CAfxTrackedMaterial*, CCacheEntry>& map = m_Context->m_Map;
+
+				for (std::map<CAfxTrackedMaterial*, CCacheEntry>::iterator it = map.begin(); it != map.end(); ++it)
+				{
+					it->first->RemoveNotifyee(this);
+				}
+			}
+
+			virtual void AfxMaterialFree(CAfxTrackedMaterial* trackedMaterial)
+			{
+				std::unique_lock<std::mutex> unique_lock(m_Context->m_MapMutex);
+
+				std::map<CAfxTrackedMaterial*, CCacheEntry>::iterator it = m_Context->m_Map.find(trackedMaterial);
+
+				if (it != m_Context->m_Map.end())
+				{
+					m_Context->m_Map.erase(it);
+				}
+			}
+
+		private:
+			CAfxBaseFxStreamContext* m_Context;
+
+
+		} *m_MapRleaseNotification;
+
+		CAction* RetrieveAction(CAfxTrackedMaterial* trackedMaterial, const CEntityInfo& currentEntity);
+
+		void IfRootThenUpdateCurrentEntity()
+		{
+			IAfxMatRenderContext* rootContext = m_RootContext;
+
+			if (rootContext && rootContext == GetCurrentContext())
+			{
+				m_Stream->UpdateCurrentEntity();
+			}
+		}
 	};
 
-	CAfxBaseFxStreamContext * m_ActiveStreamContext = nullptr;
+	CAfxBaseFxStreamContext * m_Context = nullptr;
+
+	SOURCESDK::CSGO::CBaseHandle m_CurrentEntity = SOURCESDK_CSGO_INVALID_EHANDLE_INDEX;
+
+	void UpdateCurrentEntity();
 
 	bool m_DebugPrint;
-	struct CCacheEntry
-	{
-		std::map<SOURCESDK::CSGO::CBaseHandle, CAction *> EntityActions;
-		CAction * DefaultAction;
-
-		CCacheEntry()
-			: DefaultAction(0)
-		{
-		}
-	};
-	std::map<CAfxTrackedMaterial *, CCacheEntry> m_Map;
-	std::shared_timed_mutex m_MapMutex;
-
-	class CMapRleaseNotification : public IAfxMaterialFree
-	{
-	public:
-		CMapRleaseNotification(CAfxBaseFxStream * stream)
-			: m_Stream(stream)
-		{
-		}
-
-		~CMapRleaseNotification()
-		{
-			std::unique_lock<std::shared_timed_mutex> unique_lock(m_Stream->m_MapMutex);
-
-			std::map<CAfxTrackedMaterial *, CCacheEntry> & map = m_Stream->m_Map;
-
-			for (std::map<CAfxTrackedMaterial *, CCacheEntry>::iterator it = map.begin(); it != map.end(); ++it)
-			{
-				it->first->RemoveNotifyee(this);
-			}
-		}
-
-		virtual void AfxMaterialFree(CAfxTrackedMaterial * trackedMaterial)
-		{
-			std::unique_lock<std::shared_timed_mutex> unique_lock(m_Stream->m_MapMutex);
-
-			std::map<CAfxTrackedMaterial *, CCacheEntry>::iterator it = m_Stream->m_Map.find(trackedMaterial);
-
-			if (it != m_Stream->m_Map.end())
-			{
-
-				for (std::map<SOURCESDK::CSGO::CBaseHandle, CAction *>::iterator itIt = it->second.EntityActions.begin(); itIt != it->second.EntityActions.end(); ++itIt)
-				{
-					itIt->second->Release();
-				}
-
-				it->second.DefaultAction->Release();
-
-				m_Stream->m_Map.erase(it);
-			}
-		}
-
-	private:
-		CAfxBaseFxStream * m_Stream;
-
-	} * m_MapRleaseNotification;
 
 	class CPickerEntValue : public IAfxMaterialFree
 	{
@@ -2412,12 +2587,14 @@ private:
 
 	std::list<CActionFilterValue> m_ActionFilter;
 
+	bool m_InvalidateMap = false;
+
 	struct CPickerMatValue
 	{
 		int Index;
-		std::set<CEntityInfo> Entities;
+		std::set<SOURCESDK::CSGO::CBaseHandle> Entities;
 
-		CPickerMatValue(int index, const CEntityInfo & entity)
+		CPickerMatValue(int index, const SOURCESDK::CSGO::CBaseHandle entity)
 		{
 			Index = index;
 			Entities.insert(entity);
@@ -2459,7 +2636,7 @@ private:
 
 	} * m_PickerMaterialsRleaseNotification;
 
-	std::map<CEntityInfo, CPickerEntValue> m_PickerEntities;
+	std::map<SOURCESDK::CSGO::CBaseHandle, CPickerEntValue> m_PickerEntities;
 	bool m_PickingEntities;
 	bool m_PickerEntitiesAlerted;
 
@@ -2469,14 +2646,14 @@ private:
 
 	bool m_ClearBeforeRender = false;
 
-	CAction * CAfxBaseFxStream::GetAction(CAfxTrackedMaterial * trackedMaterial);
+	CAction * CAfxBaseFxStream::GetAction(CAfxTrackedMaterial * trackedMaterial, const CEntityInfo& currentEntity);
 	CAction * CAfxBaseFxStream::GetAction(CAfxTrackedMaterial * trackedMaterial, CAction * action);
 
 	/*
 	void ConvertDepthAction(CAction * & action, bool to24);
 	*/
 
-	bool Picker_GetHidden(CAfxTrackedMaterial * tackedMaterial, const CEntityInfo & currentEntity);
+	bool Picker_GetHidden(CAfxTrackedMaterial * tackedMaterial, SOURCESDK::CSGO::CBaseHandle currentEntity);
 };
 
 class __declspec(novtable) IAfxBasefxStreamModifier abstract
@@ -2916,7 +3093,7 @@ public:
 #endif
 
 	//void OnRender(CCSViewRender_Render_t fn, void * this_ptr, const SOURCESDK::vrect_t_csgo * rect);
-	void OnRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
+	void OnRenderView(CCSViewRender_RenderView_t fn, void* This, void* Edx, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
 
 	bool OnViewRenderShouldForceNoVis(bool orgValue);
 
@@ -3025,7 +3202,27 @@ public:
 
 	virtual void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable);
 
+	void BeforeFrameStart()
+	{
+		m_DeletedEntites.clear();
+	}
+
+	void OnClientEntityCreated(SOURCESDK::C_BaseEntity_csgo* ent)
+	{
+		if (ent) m_Entities[ent] = ent->GetRefEHandle();
+	}
+
+	void OnClientEntityDeleted(SOURCESDK::C_BaseEntity_csgo* ent)
+	{
+		auto it = m_Entities.find(ent);
+		m_DeletedEntites.push_back(it->second);
+		m_Entities.erase(it);
+	}
+
 private:
+	std::map<SOURCESDK::C_BaseEntity_csgo*,SOURCESDK::CSGO::CBaseHandle> m_Entities;
+	std::list<SOURCESDK::CSGO::CBaseHandle> m_DeletedEntites;
+
 	enum MainStreamMode_e
 	{
 		MainStreamMode_None,
@@ -3192,16 +3389,16 @@ private:
 
 	void CreateRenderTargets(SOURCESDK::IMaterialSystem_csgo * materialSystem);
 
-	IAfxMatRenderContextOrg * CaptureStream(IAfxMatRenderContextOrg * ctxp, CAfxRecordStream * stream, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
-	IAfxMatRenderContextOrg * CaptureStreamToBuffer(IAfxMatRenderContextOrg * ctxp, size_t streamIndex, CAfxRenderViewStream * stream, CAfxRecordStream * captureTarget, bool first, bool last, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
+	IAfxMatRenderContextOrg * CaptureStream(IAfxMatRenderContextOrg * ctxp, CAfxRecordStream * stream, CCSViewRender_RenderView_t fn, void* This, void* Edx, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
+	IAfxMatRenderContextOrg * CaptureStreamToBuffer(IAfxMatRenderContextOrg * ctxp, size_t streamIndex, CAfxRenderViewStream * stream, CAfxRecordStream * captureTarget, bool first, bool last, CCSViewRender_RenderView_t fn, void* This, void* Edx, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
 
-	IAfxMatRenderContextOrg * PreviewStream(IAfxMatRenderContextOrg * ctxp, CAfxRenderViewStream * previewStream, bool isLast, int slot, int cols, CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
+	IAfxMatRenderContextOrg * PreviewStream(IAfxMatRenderContextOrg * ctxp, CAfxRenderViewStream * previewStream, bool isLast, int slot, int cols, CCSViewRender_RenderView_t fn, void* This, void* Edx, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw, float * smokeOverlayAlphaFactor, float & smokeOverlayAlphaFactorMultiplyer);
 
 	IAfxStreamContext * FindStreamContext(IAfxMatRenderContext * ctx);
 
 	void BlockPresent(IAfxMatRenderContextOrg * ctx, bool value);
 
-	void DoRenderView(CCSViewRender_RenderView_t fn, void * this_ptr, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw);
+	void DoRenderView(CCSViewRender_RenderView_t fn, void* This, void* Edx, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw);
 
 	void CalcMainStream();
 };

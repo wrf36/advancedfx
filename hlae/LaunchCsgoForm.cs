@@ -16,6 +16,26 @@ namespace AfxGui
             InitializeComponent();
 
             this.Icon = Program.Icon;
+
+            this.Text = L10n._p("Launch CS:GO dialog", "Launch CS:GO ...");
+            this.groupBoxGame.Text = L10n._p("Launch CS:GO dialog", "Game");
+            this.labelExe.Text = L10n._p("Launch CS:GO dialog", "csgo.exe file:");
+            this.buttonExe.Text = L10n._p("Launch CS:GO dialog", "Browse ...");
+            this.groupBoxMmcfg.Text = L10n._p("Launch CS:GO dialog", "Movie making config parent folder");
+            this.buttonMmcfgInfo.Text = L10n._p("Launch CS:GO dialog", "What's this?");
+            this.checkBoxEnableMmcfg.Text = L10n._p("Launch CS:GO dialog", "enable");
+            this.buttonMmcfg.Text = L10n._p("Launch CS:GO dialog", "Browse ...");
+            this.groupBoxRes.Text = L10n._p("Launch CS:GO dialog", "Graphic Resolution");
+            this.checkBoxEnableGfx.Text = L10n._p("Launch CS:GO dialog", "enable");
+            this.labelGfxWidth.Text = L10n._p("Launch CS:GO dialog", "Width:");
+            this.labelGfxHeight.Text = L10n._p("Launch CS:GO dialog", "Height:");
+            this.labelGfxInfo.Text = L10n._p("Launch CS:GO dialog", "Actual results depend on the game.");
+            this.checkBoxGfxFull.Text = L10n._p("Launch CS:GO dialog", "full screen");
+            this.groupBoxCmdOpts.Text = L10n._p("Launch CS:GO dialog", "Custom command line options");
+            this.checkBoxAvoidVac.Text = L10n._p("Launch CS:GO dialog", "{0} (prevents joining VAC secured server / VAC bans)", "-insecure");
+            this.checkBoxRemeber.Text = L10n._p("Launch CS:GO dialog", "remember my changes");
+            this.buttonOK.Text = L10n._p("Launch CS:GO dialog", "L&aunch");
+            this.buttonCancel.Text = L10n._p("Launch CS:GO dialog", "Can&cel");
         }
 
         internal CfgLauncherCsgo Config
@@ -58,18 +78,6 @@ namespace AfxGui
 
         private void checkBoxAvoidVac_Click(object sender, EventArgs e)
         {
-            /*
-            MessageBox.Show(
-                "HLAE users requested this option to be made mandatory.\n"
-                +"The hook will refuse to work without it, thus it can not be removed.",
-                "Mandatory option ...",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Stop
-            );
-
-            this.checkBoxAvoidVac.Checked = true;
-            */
-
             if (!this.checkBoxAvoidVac.Checked)
             {
                 DialogResult dr = MessageBox.Show(
@@ -118,13 +126,8 @@ namespace AfxGui
         private void buttonMmcfgInfo_Click(object sender, EventArgs e)
         {
             MessageBox.Show(
-                "When enabled you can set a parent folder for your movie making config for the game.\n"
-                + "The game will create a sub-folder called cfg there and store config.cfg\n"
-                + "and video settings in that folder.\n"
-                + "Also you can put your movie making config into that cfg sub-folder,\n"
-                + "however the game will load those only if they are not present in"
-                + "the csgo/cfg folder already.",
-                "About movie making config parent folder",
+                L10n._p("Launch CS:GO dialog | MmcfgFolder Description", "When enabled you can set a parent folder for your movie making config for the game.\nThe game will create a sub-folder called cfg there and store config.cfg\nand video settings in that folder.\nAlso you can put your movie making config into that cfg sub-folder,\nhowever the game will load those only if they are not present inthe csgo/cfg folder already."),
+                L10n._p("Launch CS:GO dialog | MmcfgFolder Title", "About movie making config parent folder"),
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Information,
                 MessageBoxDefaultButton.Button1
