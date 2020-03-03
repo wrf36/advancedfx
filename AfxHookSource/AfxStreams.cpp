@@ -1797,7 +1797,6 @@ CAfxBaseFxStream::CAction * CAfxBaseFxStream::CAfxBaseFxStreamContext::RetrieveA
 {
 	CAction * action = nullptr;
 
-	std::unique_lock<std::mutex> lock(m_MapMutex);
 	std::map<CAfxTrackedMaterial *, CCacheEntry>::iterator it = m_Map.find(trackedMaterial);
 
 	if (it == m_Map.end())
@@ -2311,8 +2310,6 @@ void CAfxBaseFxStream::CAfxBaseFxStreamContext::InvalidateMap()
 {
 	if(m_Stream->m_DebugPrint) Tier0_Msg("Stream: Invalidating material cache.\n");
 
-	std::unique_lock<std::mutex> lock(m_MapMutex);
-
 	for(std::map<CAfxTrackedMaterial *, CCacheEntry>::iterator it = m_Map.begin(); it != m_Map.end(); ++it)
 	{
 		it->first->RemoveNotifyee(m_MapRleaseNotification);
@@ -2657,6 +2654,14 @@ void CAfxBaseFxStream::CAfxBaseFxStreamContext::QueueBegin(const CAfxBaseFxStrea
 	{
 		// Is leaf context.
 
+		if (m_Data.InvalidateMap)
+		{
+			m_Data.InvalidateMap = false;
+			InvalidateMap();
+		}
+
+		m_MapMutex.lock();
+
 		m_Data = data;
 		m_IsNextDepth = false;
 		m_DrawingHud = false;
@@ -2665,12 +2670,6 @@ void CAfxBaseFxStream::CAfxBaseFxStreamContext::QueueBegin(const CAfxBaseFxStrea
 		m_CurrentEntity.Data.ClassName = "";
 		m_CurrentEntity.Data.IsPlayer = false;
 		m_CurrentEntity.Data.TeamNumber = 0;
-
-		if (m_Data.InvalidateMap)
-		{
-			m_Data.InvalidateMap = false;
-			InvalidateMap();
-		}
 
 		for (auto it = m_Data.DeletedEntities.begin(); it != m_Data.DeletedEntities.end(); ++it)
 		{
@@ -2732,6 +2731,7 @@ void CAfxBaseFxStream::CAfxBaseFxStreamContext::QueueEnd(bool isRoot)
 			AfxD3D9PopOverrideState();
 		}
 
+		m_MapMutex.unlock();
 	}
 
 	if (isRoot)
@@ -3877,7 +3877,7 @@ void CAfxBaseFxStream::CActionGlowColorMap::Console_Edit(IWrpCommandArgs* args)
 				m_AfxColorLut = nullptr;
 			}
 			FILE* file = nullptr;
-			if (fopen_s(&file, args->ArgV(2), "rb+"))
+			if (0 == fopen_s(&file, args->ArgV(2), "rb"))
 			{
 				m_AfxColorLut = new CAfxColorLut();
 				if (!m_AfxColorLut->LoadFromFile(file))
@@ -3908,15 +3908,15 @@ void CAfxBaseFxStream::CActionGlowColorMap::Console_Edit(IWrpCommandArgs* args)
 			if (3 == argC)
 			{
 				std::unique_lock<std::shared_timed_mutex> lock(m_EditMutex);
-				m_DebugColor = 0 != atoi(args->ArgV(2));
+				m_DebugColor = atoi(args->ArgV(2));
 				return;
 			}
 
 			Tier0_Msg(
-				"%s debugColor 0|1 - Enable debug coloring (also forces alpha to 1 and suspends remap), combine with doBloomAndToneMapping 0 on a stream.\n"
+				"%s debugColor 0|1|2 - Enable debug coloring (1: opaque color, 2: alpha value), combine with doBloomAndToneMapping 0 on a stream.\n"
 				"Current value: %i\n"
 				, arg0
-				,m_DebugColor ? 1 : 0);
+				,m_DebugColor);
 			return;
 		}
 	}
@@ -3948,7 +3948,7 @@ void CAfxBaseFxStream::CActionGlowColorMap::UnlockMesh(CAfxBaseFxStreamContext* 
 		for (int i = 0; i < numVerts; ++i)
 		{
 			unsigned char* Color = desc.m_pColor + i * desc.m_VertexSize_Color;
-			CAfxColorLut::CRgba rgba(Color[0] / 255.0f, Color[1] / 255.0f, Color[2] / 255.0f, Color[3] / 255.0f);
+			CAfxColorLut::CRgba rgba(Color[2] / 255.0f, Color[1] / 255.0f, Color[0] / 255.0f, Color[3] / 255.0f);
 
 			if (m_DebugColor)
 			{
@@ -3959,9 +3959,9 @@ void CAfxBaseFxStream::CActionGlowColorMap::UnlockMesh(CAfxBaseFxStreamContext* 
 				RemapColor(rgba.R, rgba.G, rgba.B, rgba.A);
 			}
 
-			Color[0] = (unsigned char)min(255.0f, rgba.R * 255.0f + 0.5f);
+			Color[2] = (unsigned char)min(255.0f, rgba.R * 255.0f + 0.5f);
 			Color[1] = (unsigned char)min(255.0f, rgba.G * 255.0f + 0.5f);
-			Color[2] = (unsigned char)min(255.0f, rgba.B * 255.0f + 0.5f);
+			Color[0] = (unsigned char)min(255.0f, rgba.B * 255.0f + 0.5f);
 			Color[3] = (unsigned char)min(255.0f, rgba.A * 255.0f + 0.5f);
 		}
 	}
@@ -3997,7 +3997,7 @@ void CAfxBaseFxStream::CActionGlowColorMap::RemapColor(float& r, float& g, float
 
 	CAfxColorLut::CRgba result(iV);
 
-	if (m_AfxColorLut->Query(iV, &result))
+	m_AfxColorLut->Query(r, g, b, a, result.R, result.G, result.B, result.A);
 	{
 		r = result.R;
 		g = result.G;
