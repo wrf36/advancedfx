@@ -10,6 +10,7 @@
 #include "MirvTime.h"
 #include "MirvCalcs.h"
 #include "AfxCommandLine.h"
+#include "AfxStreams.h"
 
 #include <Windows.h>
 
@@ -20,6 +21,8 @@
 #include <mutex>
 #include <shared_mutex>
 
+#include <memory>
+
 // TODO: very fast disconnects and reconnects will cause invalid state probably.
 
 extern WrpVEngineClient * g_VEngineClient;
@@ -28,8 +31,7 @@ extern Hook_VClient_RenderView g_Hook_VClient_RenderView;
 extern SOURCESDK::IVRenderView_csgo * g_pVRenderView_csgo;
 
 namespace AfxInterop {
-
-	const INT32 m_Version = 5;
+	IAfxInteropSurface* m_Surface = NULL;
 
 	class CInteropClient
 	{
@@ -39,76 +41,83 @@ namespace AfxInterop {
 
 		}
 
+		/// <remarks>Threadsafe.</reamarks>
+		void AddRef()
+		{
+			++m_RefCount;
+		}
+
+		/// <remarks>Threadsafe.</reamarks>
+		void Release()
+		{
+			--m_RefCount;
+			if (0 == m_RefCount) delete this;
+		}
+
 		void BeforeFrameStart()
 		{
-			if (!Connect()) return;
-
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
-
 			if (!m_EngineConnected) return;
 
 			int errorLine = 0;
 
-			if (!WriteInt32(m_hEnginePipe, EngineMessage_BeforeFrameStart)) { errorLine = __LINE__; goto locked_error; }
+			if (!WriteInt32(m_hEnginePipe, EngineMessage_BeforeFrameStart)) { errorLine = __LINE__; goto error; }
 
-			if (!SendCommands(m_hEnginePipe)) { errorLine = __LINE__; goto locked_error; }
+			if (!SendCommands(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
-			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto locked_error; }
+			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
 			UINT32 commandCount;
 
-			if (!ReadCompressedUInt32(m_hEnginePipe, commandCount)) { errorLine = __LINE__; goto locked_error; }
+			if (!ReadCompressedUInt32(m_hEnginePipe, commandCount)) { errorLine = __LINE__; goto error; }
 
 			for (UINT32 i = 0; i < commandCount; ++i)
 			{
 				std::string command;
 
-				if (!ReadStringUTF8(m_hEnginePipe, command)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadStringUTF8(m_hEnginePipe, command)) { errorLine = __LINE__; goto error; }
 
 				g_VEngineClient->ExecuteClientCmd(command.c_str());
 			}
 
 			return;
 
-		locked_error:
+		error:
 			Tier0_Warning("AfxInterop::BeforeFrameStart: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+			DisconnectEngine();
 			return;
 		}
 
 		void BeforeFrameRenderStart()
 		{
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
+			ConnectEngine();
+
+			if (m_EngineWantsConnect) QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CConnectFunctor(this)));
 
 			if (!m_EngineConnected) return;
 
 			int errorLine = 0;
 
-			if (!WriteInt32(m_hEnginePipe, EngineMessage_BeforeFrameRenderStart)) { errorLine = __LINE__; goto locked_error; }
+			if (!WriteInt32(m_hEnginePipe, EngineMessage_BeforeFrameRenderStart)) { errorLine = __LINE__; goto error; }
 
-			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto locked_error; }
+			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
 			return;
 
-		locked_error:
+		error:
 			Tier0_Warning("AfxInterop::BeforeFrameRenderStart: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+			DisconnectEngine();
 			return;
 		}
 
 		void AfterFrameRenderStart()
 		{
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
-
 			if (!m_EngineConnected) return;
 
 			int errorLine = 0;
 
-			if (!WriteInt32(m_hEnginePipe, EngineMessage_AfterFrameRenderStart)) { errorLine = __LINE__; goto locked_error; }
+			if (!WriteInt32(m_hEnginePipe, EngineMessage_AfterFrameRenderStart)) { errorLine = __LINE__; goto error; }
 
-			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto locked_error; }
+			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
 			{
 				UINT32 numCalcs;
@@ -123,11 +132,11 @@ namespace AfxInterop {
 
 				// Read and compute handle calcs:
 
-				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto error; }
 
 				for (UINT32 i = 0; i < numCalcs; ++i)
 				{
-					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto error; }
 
 					if (IMirvHandleCalc* calc = g_MirvHandleCalcs.GetByName(calcName.c_str()))
 					{
@@ -144,11 +153,11 @@ namespace AfxInterop {
 
 				// Read and compute vecang calcs:
 
-				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto error; }
 
 				for (UINT32 i = 0; i < numCalcs; ++i)
 				{
-					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto error; }
 
 					if (IMirvVecAngCalc* calc = g_MirvVecAngCalcs.GetByName(calcName.c_str()))
 					{
@@ -166,11 +175,11 @@ namespace AfxInterop {
 
 				// Read and compute cam calcs:
 
-				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto error; }
 
 				for (UINT32 i = 0; i < numCalcs; ++i)
 				{
-					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto error; }
 
 					if (IMirvCamCalc* calc = g_MirvCamCalcs.GetByName(calcName.c_str()))
 					{
@@ -189,11 +198,11 @@ namespace AfxInterop {
 
 				// Read and compute fov calcs:
 
-				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto error; }
 
 				for (UINT32 i = 0; i < numCalcs; ++i)
 				{
-					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto error; }
 
 					if (IMirvFovCalc* calc = g_MirvFovCalcs.GetByName(calcName.c_str()))
 					{
@@ -210,11 +219,11 @@ namespace AfxInterop {
 
 				// Read and compute bool calcs:
 
-				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto error; }
 
 				for (UINT32 i = 0; i < numCalcs; ++i)
 				{
-					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto error; }
 
 					if (IMirvBoolCalc* calc = g_MirvBoolCalcs.GetByName(calcName.c_str()))
 					{
@@ -231,11 +240,11 @@ namespace AfxInterop {
 
 				// Read and compute int calcs:
 
-				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadCompressedUInt32(m_hEnginePipe, numCalcs)) { errorLine = __LINE__; goto error; }
 
 				for (UINT32 i = 0; i < numCalcs; ++i)
 				{
-					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadStringUTF8(m_hEnginePipe, calcName)) { errorLine = __LINE__; goto error; }
 
 					if (IMirvIntCalc* calc = g_MirvIntCalcs.GetByName(calcName.c_str()))
 					{
@@ -259,15 +268,15 @@ namespace AfxInterop {
 
 					if (result)
 					{
-						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteInt32(m_hEnginePipe, result->IntHandle)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteInt32(m_hEnginePipe, result->IntHandle)) { errorLine = __LINE__; goto error; }
 
 						delete result;
 					}
 					else
 					{
-						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto error; }
 					}
 				}
 
@@ -280,21 +289,21 @@ namespace AfxInterop {
 
 					if (result)
 					{
-						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteSingle(m_hEnginePipe, result->X)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Y)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Z)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteSingle(m_hEnginePipe, result->X)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Y)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Z)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteSingle(m_hEnginePipe, result->Pitch)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Yaw)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Roll)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteSingle(m_hEnginePipe, result->Pitch)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Yaw)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Roll)) { errorLine = __LINE__; goto error; }
 
 						delete result;
 					}
 					else
 					{
-						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto error; }
 					}
 				}
 
@@ -307,23 +316,23 @@ namespace AfxInterop {
 
 					if (result)
 					{
-						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteSingle(m_hEnginePipe, result->X)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Y)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Z)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteSingle(m_hEnginePipe, result->X)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Y)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Z)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteSingle(m_hEnginePipe, result->Pitch)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Yaw)) { errorLine = __LINE__; goto locked_error; }
-						if (!WriteSingle(m_hEnginePipe, result->Roll)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteSingle(m_hEnginePipe, result->Pitch)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Yaw)) { errorLine = __LINE__; goto error; }
+						if (!WriteSingle(m_hEnginePipe, result->Roll)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteSingle(m_hEnginePipe, result->Fov)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteSingle(m_hEnginePipe, result->Fov)) { errorLine = __LINE__; goto error; }
 
 						delete result;
 					}
 					else
 					{
-						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto error; }
 					}
 				}
 
@@ -336,15 +345,15 @@ namespace AfxInterop {
 
 					if (result)
 					{
-						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteSingle(m_hEnginePipe, result->Fov)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteSingle(m_hEnginePipe, result->Fov)) { errorLine = __LINE__; goto error; }
 
 						delete result;
 					}
 					else
 					{
-						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto error; }
 					}
 				}
 
@@ -357,15 +366,15 @@ namespace AfxInterop {
 
 					if (result)
 					{
-						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteBoolean(m_hEnginePipe, result->Result)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, result->Result)) { errorLine = __LINE__; goto error; }
 
 						delete result;
 					}
 					else
 					{
-						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto error; }
 					}
 				}
 
@@ -378,15 +387,15 @@ namespace AfxInterop {
 
 					if (result)
 					{
-						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto error; }
 
-						if (!WriteInt32(m_hEnginePipe, result->Result)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteInt32(m_hEnginePipe, result->Result)) { errorLine = __LINE__; goto error; }
 
 						delete result;
 					}
 					else
 					{
-						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto locked_error; }
+						if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto error; }
 					}
 				}
 
@@ -395,41 +404,38 @@ namespace AfxInterop {
 
 			return;
 
-		locked_error:
+		error:
 			Tier0_Warning("AfxInterop::AfterFrameRenderStart: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+			DisconnectEngine();
 			return;
 		}
 
 		bool OnViewOverride(float& Tx, float& Ty, float& Tz, float& Rx, float& Ry, float& Rz, float& Fov)
 		{
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
-
 			if (!m_EngineConnected) return false;
 
 			int errorLine = 0;
 
-			if (!WriteInt32(m_hEnginePipe, EngineMessage_OnViewOverride)) { errorLine = __LINE__; goto locked_error; }
+			if (!WriteInt32(m_hEnginePipe, EngineMessage_OnViewOverride)) { errorLine = __LINE__; goto error; }
 
-			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto locked_error; }
+			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
 			{
 				bool overrideView;
 
-				if (!ReadBoolean(m_hEnginePipe, overrideView)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadBoolean(m_hEnginePipe, overrideView)) { errorLine = __LINE__; goto error; }
 
 				if (overrideView)
 				{
 					FLOAT tTx, tTy, tTz, tRx, tRy, tRz, tFov;
 
-					if (!ReadSingle(m_hEnginePipe, tTx)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadSingle(m_hEnginePipe, tTy)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadSingle(m_hEnginePipe, tTz)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadSingle(m_hEnginePipe, tRx)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadSingle(m_hEnginePipe, tRy)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadSingle(m_hEnginePipe, tRz)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadSingle(m_hEnginePipe, tFov)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadSingle(m_hEnginePipe, tTx)) { errorLine = __LINE__; goto error; }
+					if (!ReadSingle(m_hEnginePipe, tTy)) { errorLine = __LINE__; goto error; }
+					if (!ReadSingle(m_hEnginePipe, tTz)) { errorLine = __LINE__; goto error; }
+					if (!ReadSingle(m_hEnginePipe, tRx)) { errorLine = __LINE__; goto error; }
+					if (!ReadSingle(m_hEnginePipe, tRy)) { errorLine = __LINE__; goto error; }
+					if (!ReadSingle(m_hEnginePipe, tRz)) { errorLine = __LINE__; goto error; }
+					if (!ReadSingle(m_hEnginePipe, tFov)) { errorLine = __LINE__; goto error; }
 
 					Tx = tTx;
 					Ty = tTy;
@@ -446,23 +452,25 @@ namespace AfxInterop {
 
 			return false;
 
-		locked_error:
+		error:
 			Tier0_Warning("AfxInterop::OnViewOverride: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+			DisconnectEngine();
 			return false;
 		}
 
-		EnabledFeatures_t& GetEnabled()
+		bool GetActive()
 		{
-			return m_Enabled;
+			return m_EngineWantsConnect;
+		}
+
+		EnabledFeatures_t& GetEnabledFeatures()
+		{
+			return m_EnabledFeatures;
 		}
 
 		void OnRenderView(int engineFrame, const SOURCESDK::CViewSetup_csgo& view)
 		{
-			m_Enabled.Clear();
-
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
+			m_EnabledFeatures.Clear();
 
 			if (!m_EngineConnected) return;
 
@@ -525,27 +533,26 @@ namespace AfxInterop {
 
 				if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
-				if (!ReadBoolean(m_hEnginePipe, m_Enabled.BeforeTranslucentShadow)) { errorLine = __LINE__; goto error; }
-				if (!ReadBoolean(m_hEnginePipe, m_Enabled.AfterTranslucentShadow)) { errorLine = __LINE__; goto error; }
-				if (!ReadBoolean(m_hEnginePipe, m_Enabled.BeforeTranslucent)) { errorLine = __LINE__; goto error; }
-				if (!ReadBoolean(m_hEnginePipe, m_Enabled.AfterTranslucent)) { errorLine = __LINE__; goto error; }
-				if (!ReadBoolean(m_hEnginePipe, m_Enabled.BeforeHud)) { errorLine = __LINE__; goto error; }
-				if (!ReadBoolean(m_hEnginePipe, m_Enabled.AfterHud)) { errorLine = __LINE__; goto error; }
+				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.BeforeTranslucentShadow)) { errorLine = __LINE__; goto error; }
+				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterTranslucentShadow)) { errorLine = __LINE__; goto error; }
+				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.BeforeTranslucent)) { errorLine = __LINE__; goto error; }
+				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterTranslucent)) { errorLine = __LINE__; goto error; }
+				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.BeforeHud)) { errorLine = __LINE__; goto error; }
+				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterHud)) { errorLine = __LINE__; goto error; }
 			}
+
+			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CPrepareDrawFunctor(this, AfxInterop::GetFrameCount())));
 
 			return;
 
 		error:
 			Tier0_Warning("AfxInterop::OnRenderView: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+			DisconnectEngine();
 			return;
 		}
 
 		void OnRenderViewEnd()
 		{
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
-
 			if (!m_EngineConnected) return;
 
 			int errorLine = 0;
@@ -554,20 +561,19 @@ namespace AfxInterop {
 				if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 			}
 
+			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new COnRenderViewEndFunctor(this)));
+
 			return;
 
 		error:
 			Tier0_Warning("AfxInterop::OnRenderViewEnd: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+			DisconnectEngine();
 			return;
 		}
 
-		void On_DrawTranslucentRenderables(SOURCESDK::CSGO::CRendering3dView* rendering3dView, bool bInSkybox, bool bShadowDepth, bool afterCall)
+		void On_DrawTranslucentRenderables(IAfxMatRenderContext* ctx, SOURCESDK::CSGO::CRendering3dView* rendering3dView, bool bInSkybox, bool bShadowDepth, bool afterCall)
 		{
 			if (bInSkybox) return;
-
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
 
 			if (!m_EngineConnected) return;
 
@@ -580,10 +586,12 @@ namespace AfxInterop {
 				{
 					if (false == afterCall)
 					{
+						if (!m_EnabledFeatures.BeforeTranslucentShadow) return;
 						message = EngineMessage_BeforeTranslucentShadow;
 					}
 					else
 					{
+						if (!m_EnabledFeatures.AfterTranslucentShadow) return;
 						message = EngineMessage_AfterTranslucentShadow;
 					}
 				}
@@ -591,10 +599,12 @@ namespace AfxInterop {
 				{
 					if (false == afterCall)
 					{
+						if (!m_EnabledFeatures.BeforeTranslucent) return;
 						message = EngineMessage_BeforeTranslucent;
 					}
 					else
 					{
+						if (!m_EnabledFeatures.AfterTranslucent) return;
 						message = EngineMessage_AfterTranslucent;
 					}
 				}
@@ -649,44 +659,51 @@ namespace AfxInterop {
 				if (!WriteSingle(m_hEnginePipe, viewToProjection.m[3][2])) { errorLine = __LINE__; goto error; }
 				if (!WriteSingle(m_hEnginePipe, viewToProjection.m[3][3])) { errorLine = __LINE__; goto error; }
 
+				QueueOrExecute(ctx->GetOrg(), new CAfxLeafExecute_Functor(new COn_DrawTranslucentRenderablesFunctor(this, bInSkybox, bShadowDepth, afterCall)));
+
 				return;
 			}
 
 		error:
 			Tier0_Warning("AfxInterop::On_DrawingTranslucentRenderables: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+			DisconnectEngine();
 			return;
 		}
 
+		void OnBeforeHud(IAfxMatRenderContext* ctx)
+		{
+			QueueOrExecute(ctx->GetOrg(), new CAfxLeafExecute_Functor(new CBeforeHudFunctor(this)));
+		}
+
+		void OnAfterHud(IAfxMatRenderContext* ctx)
+		{
+			QueueOrExecute(ctx->GetOrg(), new CAfxLeafExecute_Functor(new CAfterHudFunctor(this)));
+		}
+
 		void Shutdown() {
-			Disconnect();
+			DisconnectDrawing();
+			DisconnectEngine();
 		}
 
 		void DrawingThreadPrepareDraw(int frameCount, IAfxInteropSurface * mainSurface)
 		{
 			m_DrawingSkip = true;
+			m_DrawingFrameCount = frameCount;
 
-			std::unique_lock<std::mutex> lock(m_DrawingConnectMutex);
+			if (!m_DrawingConnected) return;
 
-			if (!(m_DrawingConnected || m_DrawingConnecting)) return;
-
-			if (m_DrawingConnecting)
-			{
-				m_DrawingConnecting = false;
-				m_DrawingConnected = true;
-			}
+			if (6 == m_DrawingVersion) return;
 
 			int errorLine = 0;
 
 			while (true)
 			{
-				if (!WriteInt32(m_hDrawingPipe, DrawingMessage_PreapareDraw)) { errorLine = __LINE__; goto locked_error; }
-				if (!WriteInt32(m_hDrawingPipe, frameCount)) { errorLine = __LINE__; goto locked_error; }
-				if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto locked_error; }
+				if (!WriteInt32(m_hDrawingPipe, DrawingMessage_PreapareDraw)) { errorLine = __LINE__; goto error; }
+				if (!WriteInt32(m_hDrawingPipe, frameCount)) { errorLine = __LINE__; goto error; }
+				if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto error; }
 
 				INT32 prepareDrawReply;
-				if (!ReadInt32(m_hDrawingPipe, prepareDrawReply)) { errorLine = __LINE__; goto locked_error; }
+				if (!ReadInt32(m_hDrawingPipe, prepareDrawReply)) { errorLine = __LINE__; goto error; }
 
 				switch (prepareDrawReply)
 				{
@@ -704,10 +721,10 @@ namespace AfxInterop {
 					bool colorDepthTextureWasLost;
 					HANDLE sharedColorDepthTextureHandle;
 
-					if (!ReadBoolean(m_hDrawingPipe, colorTextureWasLost)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadHandle(m_hDrawingPipe, sharedColorTextureHandle)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadBoolean(m_hDrawingPipe, colorDepthTextureWasLost)) { errorLine = __LINE__; goto locked_error; }
-					if (!ReadHandle(m_hDrawingPipe, sharedColorDepthTextureHandle)) { errorLine = __LINE__; goto locked_error; }
+					if (!ReadBoolean(m_hDrawingPipe, colorTextureWasLost)) { errorLine = __LINE__; goto error; }
+					if (!ReadHandle(m_hDrawingPipe, sharedColorTextureHandle)) { errorLine = __LINE__; goto error; }
+					if (!ReadBoolean(m_hDrawingPipe, colorDepthTextureWasLost)) { errorLine = __LINE__; goto error; }
+					if (!ReadHandle(m_hDrawingPipe, sharedColorDepthTextureHandle)) { errorLine = __LINE__; goto error; }
 
 					m_DrawingMainSurface = mainSurface;
 
@@ -771,15 +788,14 @@ namespace AfxInterop {
 					return;
 				}
 				default:
-					{ errorLine = __LINE__; goto locked_error; }
+					{ errorLine = __LINE__; goto error; }
 				}
 
 			}
 
-		locked_error:
-			Tier0_Warning("AfxInterop::DrawingThreadPrepareDraw: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+		error:
+			Tier0_Warning("AfxInterop::DrawingThreadPrepareDraw: Error in line %i (%s).\n", errorLine, m_DrawingPipeName.c_str());
+			DisconnectDrawing();
 		}
 
 
@@ -789,15 +805,11 @@ namespace AfxInterop {
 
 			if (bInSkybox) return;
 
-			std::unique_lock<std::mutex> lock(m_DrawingConnectMutex);
-
 			if (!m_DrawingConnected) return;
 
 			int errorLine = 0;
 
 			{
-				AfxD3D_WaitForGPU();
-
 				DrawingMessage message = DrawingMessage_Invalid;
 
 				if (true == bShadowDepth)
@@ -823,79 +835,105 @@ namespace AfxInterop {
 					}
 				}
 
-				if (!WriteInt32(m_hDrawingPipe, message)) { errorLine = __LINE__; goto locked_error; }
 
-				if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto locked_error; }
+				if (6 == m_DrawingVersion)
+				{
+					if(!WriteInt32(m_hDrawingPipe, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
+					if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto error; }
+					if(!HandleVersion6DrawingReply()) { errorLine = __LINE__; goto error; }
+				}
+				else
+				{
+					AfxD3D_WaitForGPU();
 
-				bool done;
-				do {
-					if (!ReadBoolean(m_hDrawingPipe, done)) { errorLine = __LINE__; goto locked_error; }
-				} while (!done);
+					if (!WriteInt32(m_hDrawingPipe, message)) { errorLine = __LINE__; goto error; }
+
+					if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto error; }
+
+					bool done;
+					do {
+						if (!ReadBoolean(m_hDrawingPipe, done)) { errorLine = __LINE__; goto error; }
+					} while (!done);
+				}
+
 
 				return;
 			}
-		locked_error:
-			Tier0_Warning("AfxInterop::DrawingThread_On_DrawTanslucentRenderables: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+		error:
+			Tier0_Warning("AfxInterop::DrawingThread_On_DrawTanslucentRenderables: Error in line %i (%s).\n", errorLine, m_DrawingPipeName.c_str());
+			DisconnectDrawing();
 			return;
 		}
 
-		void DrawingThread_BeforeHud(IAfxMatRenderContextOrg* context)
+		void DrawingThread_BeforeHud()
 		{
 			if (m_DrawingSkip) return;
-
-			std::unique_lock<std::mutex> lock(m_DrawingConnectMutex);
 
 			if (!m_DrawingConnected) return;
 
 			int errorLine = 0;
 
-			AfxD3D_WaitForGPU();
+			if (6 == m_DrawingVersion)
+			{
+				if (!WriteInt32(m_hDrawingPipe, DrawingMessage_BeforeHud)) { errorLine = __LINE__; goto error; }
 
-			if (!WriteInt32(m_hDrawingPipe, DrawingMessage_BeforeHud)) { errorLine = __LINE__; goto locked_error; }
-			if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto locked_error; }
+				if (!WriteInt32(m_hDrawingPipe, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
+				if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto error; }
+				if (!HandleVersion6DrawingReply()) { errorLine = __LINE__; goto error; }
+			}
+			else
+			{
+				AfxD3D_WaitForGPU();
 
-			bool done;
-			do {
-				if (!ReadBoolean(m_hDrawingPipe, done)) { errorLine = __LINE__; goto locked_error; }
-			} while (!done);
+				if (!WriteInt32(m_hDrawingPipe, DrawingMessage_BeforeHud)) { errorLine = __LINE__; goto error; }
+
+				if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto error; }
+
+				bool done;
+				do {
+					if (!ReadBoolean(m_hDrawingPipe, done)) { errorLine = __LINE__; goto error; }
+				} while (!done);
+			}
 
 			return;
 
-		locked_error:
-			Tier0_Warning("AfxInterop::DrawingThread_BeforeHud: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+		error:
+			Tier0_Warning("AfxInterop::DrawingThread_BeforeHud: Error in line %i (%s).\n", errorLine, m_DrawingPipeName.c_str());
+			DisconnectDrawing();
 			return;
 		}
 
-		void DrawingThread_AfterHud(IAfxMatRenderContextOrg* context)
+		void DrawingThread_AfterHud()
 		{
 			if (m_DrawingSkip) return;
-
-			std::unique_lock<std::mutex> lock(m_DrawingConnectMutex);
 
 			if (!m_DrawingConnected) return;
 
 			int errorLine = 0;
 
-			AfxD3D_WaitForGPU();
-
-			if (!WriteInt32(m_hDrawingPipe, DrawingMessage_AfterHud)) { errorLine = __LINE__; goto locked_error; }
-			if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto locked_error; }
-
-			bool done;
-			do {
-				if (!ReadBoolean(m_hDrawingPipe, done)) { errorLine = __LINE__; goto locked_error; }
-			} while (!done);
+			if (6 == m_DrawingVersion)
+			{
+				if (!WriteInt32(m_hDrawingPipe, DrawingMessage_AfterHud)) { errorLine = __LINE__; goto error; }
+				if (!WriteInt32(m_hDrawingPipe, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
+				if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto error; }
+				if (!HandleVersion6DrawingReply()) { errorLine = __LINE__; goto error; }
+			}
+			else
+			{
+				AfxD3D_WaitForGPU();
+				if (!WriteInt32(m_hDrawingPipe, DrawingMessage_AfterHud)) { errorLine = __LINE__; goto error; }
+				if (!Flush(m_hDrawingPipe)) { errorLine = __LINE__; goto error; }
+				bool done;
+				do {
+					if (!ReadBoolean(m_hDrawingPipe, done)) { errorLine = __LINE__; goto error; }
+				} while (!done);
+			}
 
 			return;
 
-		locked_error:
-			Tier0_Warning("AfxInterop::DrawingThread_BeforeHud: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+		error:
+			Tier0_Warning("AfxInterop::DrawingThread_BeforeHud: Error in line %i (%s).\n", errorLine, m_DrawingPipeName.c_str());
+			DisconnectDrawing();
 			return;
 		}
 
@@ -903,171 +941,239 @@ namespace AfxInterop {
 		{
 			if (m_DrawingSkip) return;
 
-			std::unique_lock<std::mutex> lock(m_DrawingConnectMutex);
-
 			if (!m_DrawingConnected) return;
+
+			if (6 == m_DrawingVersion) return;
 
 			int errorLine = 0;
 
-			if (!WriteInt32(m_hDrawingPipe, DrawingMessage_OnRenderViewEnd)) { errorLine = __LINE__; goto locked_error; }
+			if (!WriteInt32(m_hDrawingPipe, DrawingMessage_OnRenderViewEnd)) { errorLine = __LINE__; goto error; }
 
 			return;
 
-		locked_error:
-			Tier0_Warning("AfxInterop::DrawingThread_OnRenderViewEnd: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+		error:
+			Tier0_Warning("AfxInterop::DrawingThread_OnRenderViewEnd: Error in line %i (%s).\n", errorLine, m_DrawingPipeName.c_str());
+			DisconnectDrawing();
 			return;
 		}
 
-		bool Connect() {
-
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
-
-			if (!m_EngineWantsConnect) {
-
-				if (m_EngineConnected)
-				{
-					lock.unlock();
-					Disconnect();
-				}
-
-				return false;
+		void DrawingThread_DeviceLost()
+		{
+			while (!m_SharedSurfaces.empty())
+			{
+				auto it = m_SharedSurfaces.begin();
+				it->second.Texture->Release();
+				m_SharedSurfaces.erase(it);
 			}
-			else if (m_EngineConnected) return true;
+		}
+
+		bool ConnectDrawing() {
+			{
+				std::shared_lock<std::shared_timed_mutex> sharedLock(m_DrawingConnectMutex);
+
+				if (!m_DrawingWantsConnect) {
+					if (m_DrawingConnected) {
+						sharedLock.unlock();
+						DisconnectDrawing();
+					}
+					return false;
+				}
+				else if (m_DrawingConnected) return true;
+			}
 
 			int errorLine = 0;
 			{
-				std::string strPipeName("\\\\.\\pipe\\");
-				strPipeName.append(m_EnginePipeName);
+				std::shared_lock< std::shared_timed_mutex> engineSharedLock(m_EngineConnectMutex);
+				std::unique_lock<std::shared_timed_mutex> drawingLock(m_DrawingConnectMutex);
 
-				while (true)
+				if (m_DrawingWantsConnect && !m_DrawingConnected)
 				{
-					m_hEnginePipe = CreateFile(strPipeName.c_str(), GENERIC_WRITE | GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
-					if (m_hEnginePipe != INVALID_HANDLE_VALUE)
-						break;
-
-					DWORD lastError = GetLastError();
-
-					if (lastError != ERROR_PIPE_BUSY)
+					if (!m_DrawingPreConnect)
 					{
-						Tier0_Warning("Could not open pipe. GLE=%d (%s)\n", lastError, strPipeName.c_str());
-						{ errorLine = __LINE__; goto locked_error; }
-					}
+						std::string strPipeName("\\\\.\\pipe\\");
+						strPipeName.append(m_DrawingPipeName);
 
-					if (!WaitNamedPipe(strPipeName.c_str(), 5000))
-					{
-						Tier0_Warning("WaitNamedPipe: timed out (%s).\n", strPipeName.c_str());
-						{ errorLine = __LINE__; goto locked_error; }
-					}
-				}
+						unsigned int sleepCount = 0;
 
-				Tier0_Msg("Connected to \"%s\".\n", strPipeName.c_str());
-			}
-
-			{
-				std::unique_lock<std::mutex> lock(m_DrawingConnectMutex);
-
-				std::string strPipeName("\\\\.\\pipe\\");
-				strPipeName.append(m_EnginePipeName);
-				strPipeName.append("_drawing");
-
-				unsigned int sleepCount = 0;
-
-				while (true)
-				{
-					m_hDrawingPipe = CreateFile(strPipeName.c_str(), GENERIC_WRITE | GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
-					if (m_hDrawingPipe != INVALID_HANDLE_VALUE)
-						break;
-
-					DWORD lastError = GetLastError();
-
-					switch (lastError)
-					{
-					case ERROR_FILE_NOT_FOUND:
-						if (sleepCount >= 5000)
+						while (true)
 						{
-							Tier0_Warning("Could not open pipe. GLE=%d (%s)\n", lastError, strPipeName.c_str());
-							{ errorLine = __LINE__; goto locked_error; }
+							m_hDrawingPipe = CreateFile(strPipeName.c_str(), GENERIC_WRITE | GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+							if (m_hDrawingPipe != INVALID_HANDLE_VALUE)
+								break;
+
+							DWORD lastError = GetLastError();
+
+							switch (lastError)
+							{
+							case ERROR_FILE_NOT_FOUND:
+								if (sleepCount >= 5000)
+								{
+									Tier0_Warning("Could not open pipe. GLE=%d (%s)\n", lastError, strPipeName.c_str());
+									{ errorLine = __LINE__; goto error; }
+								}
+								++sleepCount;
+								Sleep(1);
+								continue;
+							case ERROR_PIPE_BUSY:
+								break;
+							default:
+							{
+								Tier0_Warning("Could not open pipe. GLE=%d (%s)\n", lastError, strPipeName.c_str());
+								{ errorLine = __LINE__; goto error; }
+							}
+							}
+
+							if (!WaitNamedPipe(strPipeName.c_str(), 5000))
+							{
+								Tier0_Warning("WaitNamedPipe: timed out (%s).\n", strPipeName.c_str());
+								{ errorLine = __LINE__; goto error; }
+							}
 						}
-						++sleepCount;
-						Sleep(1);
-						continue;
-					case ERROR_PIPE_BUSY:
-						break;
-					default:
-					{
-						Tier0_Warning("Could not open pipe. GLE=%d (%s)\n", lastError, strPipeName.c_str());
-						{ errorLine = __LINE__; goto locked_error; }
+
+						Tier0_Msg("Connected to \"%s\".\n", strPipeName.c_str());
+						m_DrawingPreConnect = true;
 					}
+					else if (m_EngineConnected)
+					{
+						m_DrawingConnected = true;
+						return true;
 					}
 
-					if (!WaitNamedPipe(strPipeName.c_str(), 5000))
-					{
-						Tier0_Warning("WaitNamedPipe: timed out (%s).\n", strPipeName.c_str());
-						{ errorLine = __LINE__; goto locked_error; }
-					}
 				}
-
-				Tier0_Msg("Connected to \"%s\".\n", strPipeName.c_str());
-				m_DrawingConnecting = true;
 			}
+			return false;
 
-			INT32 version;
-			if (!ReadInt32(m_hEnginePipe, version)) { errorLine = __LINE__; goto locked_error; }
-
-			if (m_Version != version)
-			{
-				Tier0_Warning("Version %d is not a supported (%d) version.\n", version, m_Version);
-				if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto locked_error; }
-				if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto locked_error; }
-			}
-
-			if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto locked_error; }
-
-			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto locked_error; }
-
-			if (!ReadBoolean(m_hEnginePipe, m_EngineServer64Bit)) { errorLine = __LINE__; goto locked_error; }
-
-			m_EngineConnected = true;
-
-			return true;
-
-		locked_error:
-			Tier0_Warning("AfxInterop::Connect: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
-			lock.unlock();
-			Disconnect();
+		error:
+			Tier0_Warning("AfxInterop::ConnectDrawing: Error in line %i (%s).\n", errorLine, m_DrawingPipeName.c_str());
+			DisconnectDrawing();
 			return false;
 		}
 
-		void Disconnect() {
-			std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
+		void DisconnectDrawing()
+		{
+			std::unique_lock<std::shared_timed_mutex> darwingLock(m_DrawingConnectMutex);
+
+			DrawingThread_DeviceLost();
+
+			if (INVALID_HANDLE_VALUE != m_hDrawingPipe)
+			{
+				if (!CloseHandle(m_hDrawingPipe))
+				{
+					Tier0_Warning("AfxInterop::Disconnect: Error in line %i (%s).\n", __LINE__, m_DrawingPipeName.c_str());
+				}
+				m_hDrawingPipe = INVALID_HANDLE_VALUE;
+			}
+
+			m_DrawingConnected = false;
+			m_DrawingPreConnect = false;
+
+			if (m_DrawingMainSurface)
+			{
+				m_DrawingMainSurface->AfxReplacementEnabled_set(false);
+				m_DrawingMainSurface->AfxSetReplacement(NULL);
+				m_DrawingMainSurface->AfxSetDepthSurface(NULL);
+				m_DrawingMainSurface = nullptr;
+			}
+		}
+
+		bool ConnectEngine() {
 
 			{
-				std::unique_lock<std::mutex> lock(m_DrawingConnectMutex);
+				std::shared_lock<std::shared_timed_mutex> sharedLock(m_EngineConnectMutex);
 
-				if (INVALID_HANDLE_VALUE != m_hDrawingPipe)
-				{
-					if (!CloseHandle(m_hDrawingPipe))
-					{
-						Tier0_Warning("AfxInterop::Disconnect: Error in line %i (%s).\n", __LINE__, m_EnginePipeName.c_str());
+				if (!m_EngineWantsConnect) {
+					if (m_EngineConnected) {
+						sharedLock.unlock();
+						DisconnectEngine();
 					}
-					m_hDrawingPipe = INVALID_HANDLE_VALUE;
+					return false;
 				}
-
-				if (m_DrawingConnected)
-				{
-					m_DrawingConnected = false;
-				}
-
-				if (m_DrawingMainSurface)
-				{
-					m_DrawingMainSurface->AfxReplacementEnabled_set(false);
-					m_DrawingMainSurface->AfxSetReplacement(NULL);
-					m_DrawingMainSurface->AfxSetDepthSurface(NULL);
-					m_DrawingMainSurface = nullptr;
-				}
+				else if (m_EngineConnected) return true;
 			}
+
+			int errorLine = 0;
+			{
+				std::unique_lock<std::shared_timed_mutex> darwingLock(m_DrawingConnectMutex);
+				std::unique_lock<std::shared_timed_mutex> engineLock(m_EngineConnectMutex);
+
+				if(!m_DrawingConnected) // do not do stuff while drawing thread is still connected
+				{
+					if (m_EngineWantsConnect && !m_EngineConnected)
+					{
+						if (!m_EnginePreConnect)
+						{
+							std::string strPipeName("\\\\.\\pipe\\");
+							strPipeName.append(m_EnginePipeName);
+
+							m_DrawingPipeName = m_EnginePipeName;
+							m_DrawingPipeName.append("_drawing");
+
+							while (true)
+							{
+								m_hEnginePipe = CreateFile(strPipeName.c_str(), GENERIC_WRITE | GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
+								if (m_hEnginePipe != INVALID_HANDLE_VALUE)
+									break;
+
+								DWORD lastError = GetLastError();
+
+								if (lastError != ERROR_PIPE_BUSY)
+								{
+									Tier0_Warning("Could not open pipe. GLE=%d (%s)\n", lastError, strPipeName.c_str());
+									{ errorLine = __LINE__; goto error; }
+								}
+
+								if (!WaitNamedPipe(strPipeName.c_str(), 5000))
+								{
+									Tier0_Warning("WaitNamedPipe: timed out (%s).\n", strPipeName.c_str());
+									{ errorLine = __LINE__; goto error; }
+								}
+							}
+
+							Tier0_Msg("Connected to \"%s\".\n", strPipeName.c_str());
+
+							m_EnginePreConnect = true;
+							m_DrawingWantsConnect = true;
+						}
+						else if(m_DrawingPreConnect) // do not do furhter stuff until drawing thread is preconnected (to maintain backwards compat)
+						{
+							if (!ReadInt32(m_hEnginePipe, m_EngineVersion)) { errorLine = __LINE__; goto error; }
+
+							switch (m_EngineVersion)
+							{
+							case 5:
+							case 6:
+								break;
+							default:
+								Tier0_Warning("Version %d is not supported.\n", m_EngineVersion);
+								if (!WriteBoolean(m_hEnginePipe, false)) { errorLine = __LINE__; goto error; }
+								if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
+								{ errorLine = __LINE__; goto error; }
+							}
+
+							if (!WriteBoolean(m_hEnginePipe, true)) { errorLine = __LINE__; goto error; }
+
+							if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
+
+							if (!ReadBoolean(m_hEnginePipe, m_EngineServer64Bit)) { errorLine = __LINE__; goto error; }
+
+							m_DrawingVersion = m_EngineVersion;
+							m_EngineConnected = true;
+							return true;
+						}
+					}
+				}			
+			}
+			return false;
+
+		error:
+			Tier0_Warning("AfxInterop::Connect: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return false;
+		}
+
+		void DisconnectEngine() {
+			std::unique_lock<std::shared_timed_mutex> drawingLock(m_DrawingConnectMutex);
+			std::unique_lock<std::shared_timed_mutex> engineLock(m_EngineConnectMutex);
 
 			if (INVALID_HANDLE_VALUE != m_hEnginePipe)
 			{
@@ -1078,10 +1184,9 @@ namespace AfxInterop {
 				m_hEnginePipe = INVALID_HANDLE_VALUE;
 			}
 
-			if (m_EngineConnected)
-			{
-				m_EngineConnected = false;
-			}
+			m_EngineConnected = false;
+			m_EnginePreConnect = false;
+			m_DrawingWantsConnect = false;
 		}
 
 		bool Console_Edit(IWrpCommandArgs* args)
@@ -1094,8 +1199,6 @@ namespace AfxInterop {
 
 				if (0 == _stricmp("pipeName", arg1))
 				{
-					std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
-
 					if (3 <= argc)
 					{
 						const char* arg2 = args->ArgV(2);
@@ -1114,8 +1217,6 @@ namespace AfxInterop {
 				}
 				else if (0 == _stricmp("connect", arg1))
 				{
-					std::unique_lock<std::mutex> lock(m_EngineConnectMutex);
-
 					if (3 <= argc)
 					{
 						const char* arg2 = args->ArgV(2);
@@ -1151,7 +1252,14 @@ namespace AfxInterop {
 			return false;
 		}
 
+	protected:
+		~CInteropClient()
+		{
+			Shutdown();
+		}
+
 	private:
+		std::atomic_int m_RefCount;
 
 		struct HandleCalcResult
 		{
@@ -1247,15 +1355,234 @@ namespace AfxInterop {
 			PrepareDrawReply_Continue = 3
 		};
 
-		std::mutex m_DrawingConnectMutex;
-		bool m_DrawingConnecting = false;
+
+
+		class CConnectFunctor
+			: public CAfxFunctor
+		{
+		public:
+			CConnectFunctor(CInteropClient* client)
+				: m_Client(client)
+			{
+				client->AddRef();
+			}
+
+			virtual void operator()()
+			{
+				m_Client->ConnectDrawing();
+				m_Client->Release();
+			}
+
+		private:
+			CInteropClient* m_Client;
+		};
+
+		class CPrepareDrawFunctor
+			: public CAfxFunctor
+		{
+		public:
+			CPrepareDrawFunctor(CInteropClient* client, int frameCount)
+				: m_Client(client),
+				m_FrameCount(frameCount)
+			{
+				client->AddRef();
+			}
+
+			virtual void operator()()
+			{
+				m_Client->DrawingThreadPrepareDraw(m_FrameCount, m_Surface);
+				m_Client->Release();
+			}
+
+		private:
+			CInteropClient* m_Client;
+			int m_FrameCount;
+		};
+
+		class COn_DrawTranslucentRenderablesFunctor
+			: public CAfxFunctor
+		{
+		public:
+			COn_DrawTranslucentRenderablesFunctor(CInteropClient* client, bool bInSkybox, bool bShadowDepth, bool afterCall)
+				: m_Client(client)
+				, m_bInSkyBox(bInSkybox)
+				, m_bShadowDepth(bShadowDepth)
+				, m_bAfterCall(afterCall)
+			{
+				client->AddRef();
+			}
+
+			virtual void operator()()
+			{
+				m_Client->DrawingThread_On_DrawTranslucentRenderables(m_bInSkyBox, m_bShadowDepth, m_bAfterCall);
+				m_Client->Release();
+			}
+
+		private:
+			CInteropClient* m_Client;
+			bool m_bInSkyBox;
+			bool m_bShadowDepth;
+			bool m_bAfterCall;
+		};
+
+		class COnRenderViewEndFunctor
+			: public CAfxFunctor
+		{
+		public:
+			COnRenderViewEndFunctor(CInteropClient* client)
+				: m_Client(client)
+			{
+				client->AddRef();
+			}
+
+			virtual void operator()() override
+			{
+				m_Client->DrawingThread_OnRenderViewEnd();
+				m_Client->Release();
+			}
+		private:
+			CInteropClient* m_Client;
+		};
+
+
+		class CBeforeHudFunctor
+			: public CAfxFunctor
+		{
+		public:
+			CBeforeHudFunctor(CInteropClient* client)
+				: m_Client(client)
+			{
+				client->AddRef();
+			}
+
+			virtual void operator()() override
+			{
+				m_Client->DrawingThread_BeforeHud();
+				m_Client->Release();
+			}
+		private:
+			CInteropClient* m_Client;
+		};
+
+		class CAfterHudFunctor
+			: public CAfxFunctor
+		{
+		public:
+			CAfterHudFunctor(CInteropClient* client)
+				: m_Client(client)
+			{
+				client->AddRef();
+			}
+
+			virtual void operator()() override
+			{
+				m_Client->DrawingThread_AfterHud();
+				m_Client->Release();
+			}
+		private:
+			CInteropClient* m_Client;
+		};
+
+		std::shared_timed_mutex m_DrawingConnectMutex;
+		std::string m_DrawingPipeName;
+		bool m_DrawingWantsConnect = false;
+		bool m_DrawingPreConnect = false;
 		bool m_DrawingConnected = false;
 
 		HANDLE m_hDrawingPipe = INVALID_HANDLE_VALUE;
 
 		bool m_DrawingSkip = true;
+		int m_DrawingFrameCount = -1;
 
 		IAfxInteropSurface* m_DrawingMainSurface = nullptr;
+
+		struct SharedSurfacesValue
+		{
+			HANDLE Handle = nullptr;
+			IDirect3DTexture9* Texture = nullptr;
+		};
+
+		std::map<INT32, SharedSurfacesValue> m_SharedSurfaces;
+
+		bool HandleVersion6DrawingReply()
+		{
+			int errorLine = 0;
+
+			INT32 textureId;
+			HANDLE sharedTextureHandle;
+			UINT32 texWidth;
+			UINT32 texHeight;
+			UINT32 d3dFormat;
+
+			if (!ReadInt32(m_hDrawingPipe, textureId)) { errorLine = __LINE__; goto error; }
+			if (!ReadHandle(m_hDrawingPipe, sharedTextureHandle)) { errorLine = __LINE__; goto error; }
+			if (!ReadUInt32(m_hDrawingPipe, texWidth)) { errorLine = __LINE__; goto error; }
+			if (!ReadUInt32(m_hDrawingPipe, texHeight)) { errorLine = __LINE__; goto error; }
+			if (!ReadUInt32(m_hDrawingPipe, d3dFormat)) { errorLine = __LINE__; goto error; }
+
+			SharedSurfacesValue* val = nullptr;
+
+			{
+				auto  itOld = m_SharedSurfaces.find(textureId);
+				if (itOld != m_SharedSurfaces.end())
+				{
+					if(itOld->second.Handle != sharedTextureHandle)
+					{
+						itOld->second.Texture->Release();
+						m_SharedSurfaces.erase(itOld);
+					}
+					else
+					{
+						val = &(itOld->second);
+					}
+				}
+			}
+
+			if (sharedTextureHandle)
+			{
+				if (IDirect3DDevice9Ex* device = AfxGetDirect3DDevice9Ex())
+				{
+					IDirect3DTexture9* texture;
+
+					if (SUCCEEDED(device->CreateTexture(texWidth, texHeight, 1, 0, (D3DFORMAT)d3dFormat, D3DPOOL_DEFAULT, &texture, &sharedTextureHandle)))
+					{
+						SharedSurfacesValue& val = m_SharedSurfaces[textureId];
+
+						val.Handle = sharedTextureHandle;
+						val.Texture = texture;
+					}
+				}
+			}
+
+			while (true)
+			{
+				bool hasRect;
+				if (!ReadBoolean(m_hDrawingPipe, hasRect)) { errorLine = __LINE__; goto error; }
+
+				if (!hasRect) break;
+
+				INT32 rectX, rectY, rectWidth, rectHeight;
+
+				if (!ReadInt32(m_hDrawingPipe, rectX)) { errorLine = __LINE__; goto error; }
+				if (!ReadInt32(m_hDrawingPipe, rectY)) { errorLine = __LINE__; goto error; }
+				if (!ReadInt32(m_hDrawingPipe, rectWidth)) { errorLine = __LINE__; goto error; }
+				if (!ReadInt32(m_hDrawingPipe, rectHeight)) { errorLine = __LINE__; goto error; }
+
+				if (val)
+				{
+					AfxDrawRect(val->Texture, rectX, rectY, rectWidth, rectHeight, 0.5f + rectX / (float)texWidth, 0.5f + rectY / (float)texHeight, 0.5f + (rectX + rectWidth -1) / (float)texWidth, 0.5f + (rectY + rectHeight -1) / (float)texHeight);
+				}
+			}
+
+			AfxD3D_WaitForGPU(); // TODO: Improve. We are slowing down more than we have to.
+			if(!WriteBoolean(m_hDrawingPipe, true)) { errorLine = __LINE__; goto error; }
+
+			return true;
+
+		error:
+			Tier0_Warning("AfxInterop::HandleVersion6DrawingReply: Error in line %i (%s).\n", errorLine, m_DrawingPipeName.c_str());
+			return false;
+		}
 
 		enum EngineMessage {
 			EngineMessage_Invalid = 0,
@@ -1310,8 +1637,9 @@ namespace AfxInterop {
 
 		bool m_EngineServer64Bit = false;
 
-		std::mutex m_EngineConnectMutex;
+		std::shared_timed_mutex m_EngineConnectMutex;
 		bool m_EngineWantsConnect = false;
+		bool m_EnginePreConnect = false;
 		bool m_EngineConnected = false;
 
 		HANDLE m_hEnginePipe = INVALID_HANDLE_VALUE;
@@ -1320,7 +1648,10 @@ namespace AfxInterop {
 
 		std::queue<CConsole> m_Commands;
 		
-		EnabledFeatures_t m_Enabled;
+		EnabledFeatures_t m_EnabledFeatures;
+
+		int m_EngineVersion = 5;
+		int m_DrawingVersion = 5;
 
 		bool ConsoleSend(HANDLE hPipe, CConsole & command)
 		{
@@ -1558,17 +1889,44 @@ namespace AfxInterop {
 		}
 	};
 
+	class CInteropClientRef
+	{
+	public:
+		CInteropClientRef(CInteropClient* client)
+			: m_Client(client)
+		{
+			client->AddRef();
+		}
+
+		CInteropClientRef(const CInteropClientRef& client)
+			: m_Client(client.m_Client)
+		{
+			m_Client->AddRef();
+		}
+
+		~CInteropClientRef()
+		{
+			m_Client->Release();
+		}
+
+		CInteropClient* Get() const
+		{
+			return m_Client;
+		}
+
+	private:
+		CInteropClient* m_Client;
+	};
+
 	int m_EngineFrame = -1;
 	//bool m_Suspended = false;
 
 	std::shared_timed_mutex m_ClientsMutex;
-	std::list<CInteropClient> m_Clients;
+	std::list<CInteropClientRef> m_Clients;
 
 	bool m_Enabled = false;
 	bool m_MainEnabled = false;
 
-	IAfxInteropSurface* m_Surface = NULL;
-	
 	void DllProcessAttach() {
 		m_MainEnabled = 0 != g_CommandLine->FindParam(L"-afxInterop");
 		m_Enabled = m_MainEnabled || 0 != g_CommandLine->FindParam(L"-afxInteropLight");
@@ -1588,7 +1946,7 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->BeforeFrameStart();
+			it->Get()->BeforeFrameStart();
 		}
 	}
 
@@ -1602,7 +1960,7 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->BeforeFrameRenderStart();
+			it->Get()->BeforeFrameRenderStart();
 		}
 	}
 
@@ -1614,7 +1972,7 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->AfterFrameRenderStart();
+			it->Get()->AfterFrameRenderStart();
 		}
 	}
 
@@ -1628,7 +1986,7 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			if (it->OnViewOverride(Tx, Ty, Tz, Rx, Ry, Rz, Fov)) overriden = true;
+			if (it->Get()->OnViewOverride(Tx, Ty, Tz, Rx, Ry, Rz, Fov)) overriden = true;
 		}
 
 		return overriden;
@@ -1644,9 +2002,9 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->OnRenderView(m_EngineFrame, view);
+			it->Get()->OnRenderView(m_EngineFrame, view);
 		
-			outEnabled.Or(it->GetEnabled());
+			outEnabled.Or(it->Get()->GetEnabledFeatures());
 		}
 	}
 
@@ -1658,11 +2016,11 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->OnRenderViewEnd();
+			it->Get()->OnRenderViewEnd();
 		}
 	}
 
-	void On_DrawTranslucentRenderables(SOURCESDK::CSGO::CRendering3dView * rendering3dView, bool bInSkybox, bool bShadowDepth, bool afterCall)
+	void On_DrawTranslucentRenderables(IAfxMatRenderContext* ctx, SOURCESDK::CSGO::CRendering3dView * rendering3dView, bool bInSkybox, bool bShadowDepth, bool afterCall)
 	{
 		if (!m_Enabled) return;
 
@@ -1670,7 +2028,29 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->On_DrawTranslucentRenderables(rendering3dView, bInSkybox, bShadowDepth, afterCall);
+			it->Get()->On_DrawTranslucentRenderables(ctx, rendering3dView, bInSkybox, bShadowDepth, afterCall);
+		}
+	}
+
+	void OnBeforeHud(IAfxMatRenderContext* ctx) {
+		if (!m_Enabled) return;
+
+		std::shared_lock<std::shared_timed_mutex> clientsLock(m_ClientsMutex);
+
+		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
+		{
+			it->Get()->OnBeforeHud(ctx);
+		}
+	}
+
+	void OnAfterHud(IAfxMatRenderContext* ctx) {
+		if (!m_Enabled) return;
+
+		std::shared_lock<std::shared_timed_mutex> clientsLock(m_ClientsMutex);
+
+		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
+		{
+			it->Get()->OnAfterHud(ctx);
 		}
 	}
 
@@ -1681,10 +2061,7 @@ namespace AfxInterop {
 
 		std::shared_lock<std::shared_timed_mutex> clientsLock(m_ClientsMutex);
 
-		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
-		{
-			it->Shutdown();
-		}
+		m_Clients.clear();
 	}
 
 	void LevelInitPreEntity(char const* pMapName) {
@@ -1705,19 +2082,16 @@ namespace AfxInterop {
 		return m_MainEnabled;
 	}
 
-	void DrawingThreadPrepareDraw(int frameCount)
-	{
-		if (!m_Enabled) return;
-
-		std::shared_lock<std::shared_timed_mutex> clientsLock(m_ClientsMutex);
-
+	bool Active() {
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->DrawingThreadPrepareDraw(frameCount, m_Surface);
+			if (it->Get()->GetActive()) return true;
 		}
+
+		return false;
 	}
 
-	void DrawingThread_On_DrawTranslucentRenderables(bool bInSkybox, bool bShadowDepth, bool afterCall)
+	void DrawingThread_DeviceLost()
 	{
 		if (!m_Enabled) return;
 
@@ -1725,43 +2099,7 @@ namespace AfxInterop {
 
 		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
 		{
-			it->DrawingThread_On_DrawTranslucentRenderables(bInSkybox, bShadowDepth, afterCall);
-		}
-	}
-	
-	void DrawingThread_BeforeHud(IAfxMatRenderContextOrg * context)
-	{
-		if (!m_Enabled) return;
-
-		std::shared_lock<std::shared_timed_mutex> clientsLock(m_ClientsMutex);
-
-		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
-		{
-			it->DrawingThread_BeforeHud(context);
-		}
-	}
-
-	void DrawingThread_AfterHud(IAfxMatRenderContextOrg * context)
-	{
-		if (!m_Enabled) return;
-
-		std::shared_lock<std::shared_timed_mutex> clientsLock(m_ClientsMutex);
-
-		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
-		{
-			it->DrawingThread_AfterHud(context);
-		}
-	}
-
-	void DrawingThread_OnRenderViewEnd()
-	{
-		if (!m_Enabled) return;
-
-		std::shared_lock<std::shared_timed_mutex> clientsLock(m_ClientsMutex);
-
-		for (auto it = m_Clients.begin(); it != m_Clients.end(); ++it)
-		{
-			it->DrawingThread_OnRenderViewEnd();
+			it->Get()->DrawingThread_DeviceLost();
 		}
 	}
 
@@ -1808,11 +2146,11 @@ CON_COMMAND(afx_interop, "Controls advancedfxInterop (i.e. with Unity engine).")
 
 	std::unique_lock<std::shared_timed_mutex> clientsLock(AfxInterop::m_ClientsMutex);
 
-	if (AfxInterop::m_Clients.empty()) AfxInterop::m_Clients.emplace_back("advancedfxInterop");
+	if (AfxInterop::m_Clients.empty()) AfxInterop::m_Clients.emplace_back(new AfxInterop::CInteropClient("advancedfxInterop"));
 
 	{
 		CSubWrpCommandArgs subArgs(args, 1);
-		if (AfxInterop::m_Clients.front().Console_Edit(&subArgs)) return;
+		if (AfxInterop::m_Clients.front().Get()->Console_Edit(&subArgs)) return;
 	}
 
 	int argc = args->ArgC();
@@ -1829,7 +2167,7 @@ CON_COMMAND(afx_interop, "Controls advancedfxInterop (i.e. with Unity engine).")
 
 				if (0 == _stricmp(arg2, "add") && 4 == argc)
 				{
-					AfxInterop::m_Clients.emplace_back(args->ArgV(3));
+					AfxInterop::m_Clients.emplace_back(new AfxInterop::CInteropClient(args->ArgV(3)));
 				}
 				else if (0 == _stricmp(arg2, "clear") && 4 == argc)
 				{
@@ -1862,7 +2200,7 @@ CON_COMMAND(afx_interop, "Controls advancedfxInterop (i.e. with Unity engine).")
 						if (target == idx)
 						{
 							CSubWrpCommandArgs subArgs(args, 4);
-							it->Console_Edit(&subArgs);
+							it->Get()->Console_Edit(&subArgs);
 							return;
 						}
 

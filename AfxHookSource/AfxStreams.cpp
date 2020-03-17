@@ -458,96 +458,6 @@ public:
 private:
 };
 
-class CAfxInteropOnRenderViewEnd_Functor
-	: public CAfxFunctor
-{
-public:
-	CAfxInteropOnRenderViewEnd_Functor()
-	{
-	}
-
-	virtual void operator()()
-	{
-		AfxInterop::DrawingThread_OnRenderViewEnd();
-	}
-
-private:
-};
-
-
-
-class AfxInteropDrawingDrawingThreadPrepareDraw
-	: public CAfxFunctor
-{
-public:
-	AfxInteropDrawingDrawingThreadPrepareDraw(int frameCount)
-		: m_FrameCount(frameCount)
-	{
-	}
-
-	virtual void operator()()
-	{
-		AfxInterop::DrawingThreadPrepareDraw(m_FrameCount);
-	}
-
-private:
-	int m_FrameCount;
-};
-
-class CAfxInteropDrawingThreadFunctor_On_DrawTranslucentRenderables
-	: public CAfxFunctor
-{
-public:
-	CAfxInteropDrawingThreadFunctor_On_DrawTranslucentRenderables(bool bInSkybox, bool bShadowDepth, bool afterCall)
-		: m_bInSkyBox(bInSkybox)
-		, m_bShadowDepth(bShadowDepth)
-		, m_bAfterCall(afterCall)
-	{
-	}
-
-	virtual void operator()()
-	{
-		AfxInterop::DrawingThread_On_DrawTranslucentRenderables(m_bInSkyBox, m_bShadowDepth, m_bAfterCall);
-	}
-
-private:
-	bool m_bInSkyBox;
-	bool m_bShadowDepth;
-	bool m_bAfterCall;
-};
-
-class AfxInteropDrawingThreadBeforeHud_Functor
-	: public CAfxFunctor
-{
-public:
-	AfxInteropDrawingThreadBeforeHud_Functor()
-	{
-	}
-
-	virtual void operator()()
-	{
-		AfxInterop::DrawingThread_BeforeHud(GetCurrentContext()->GetOrg());
-	}
-
-private:
-};
-
-class AfxInteropDrawingThreadAfterHud_Functor
-	: public CAfxFunctor
-{
-public:
-	AfxInteropDrawingThreadAfterHud_Functor()
-	{
-	}
-
-	virtual void operator()()
-	{
-		AfxInterop::DrawingThread_AfterHud(GetCurrentContext()->GetOrg());
-	}
-
-private:
-};
-
 #endif
 
 
@@ -739,26 +649,26 @@ void CAfxRenderViewStream::Capture(CAfxRecordStream * captureTarget, size_t stre
 			// (back) transform to MDT native format:
 
 			int lastLine = height >> 1;
-			if(height & 0x1) ++lastLine;
+			if (height & 0x1) ++lastLine;
 
-			for(int y=0;y<lastLine;++y)
+			for (int y = 0; y < lastLine; ++y)
 			{
 				int srcLine = y;
-				int dstLine = height -1 -y;
+				int dstLine = height - 1 - y;
 
-				for(int x=0;x<width;++x)
+				for (int x = 0; x < width; ++x)
 				{
-					unsigned char r = ((unsigned char *)pBuffer)[dstLine*imagePitch +3*x +0];
-					unsigned char g = ((unsigned char *)pBuffer)[dstLine*imagePitch +3*x +1];
-					unsigned char b = ((unsigned char *)pBuffer)[dstLine*imagePitch +3*x +2];
-									
-					((unsigned char *)pBuffer)[dstLine*imagePitch +3*x +0] = ((unsigned char *)pBuffer)[srcLine*imagePitch +3*x +2];
-					((unsigned char *)pBuffer)[dstLine*imagePitch +3*x +1] = ((unsigned char *)pBuffer)[srcLine*imagePitch +3*x +1];
-					((unsigned char *)pBuffer)[dstLine*imagePitch +3*x +2] = ((unsigned char *)pBuffer)[srcLine*imagePitch +3*x +0];
-									
-					((unsigned char *)pBuffer)[srcLine*imagePitch +3*x +0] = b;
-					((unsigned char *)pBuffer)[srcLine*imagePitch +3*x +1] = g;
-					((unsigned char *)pBuffer)[srcLine*imagePitch +3*x +2] = r;
+					unsigned char r = ((unsigned char*)pBuffer)[dstLine * imagePitch + 3 * x + 0];
+					unsigned char g = ((unsigned char*)pBuffer)[dstLine * imagePitch + 3 * x + 1];
+					unsigned char b = ((unsigned char*)pBuffer)[dstLine * imagePitch + 3 * x + 2];
+
+					((unsigned char*)pBuffer)[dstLine * imagePitch + 3 * x + 0] = ((unsigned char*)pBuffer)[srcLine * imagePitch + 3 * x + 2];
+					((unsigned char*)pBuffer)[dstLine * imagePitch + 3 * x + 1] = ((unsigned char*)pBuffer)[srcLine * imagePitch + 3 * x + 1];
+					((unsigned char*)pBuffer)[dstLine * imagePitch + 3 * x + 2] = ((unsigned char*)pBuffer)[srcLine * imagePitch + 3 * x + 0];
+
+					((unsigned char*)pBuffer)[srcLine * imagePitch + 3 * x + 0] = b;
+					((unsigned char*)pBuffer)[srcLine * imagePitch + 3 * x + 1] = g;
+					((unsigned char*)pBuffer)[srcLine * imagePitch + 3 * x + 2] = r;
 				}
 			}
 
@@ -1193,9 +1103,9 @@ void CAfxTwinStream::CaptureEnd()
 							};
 
 							signed short whiteMinusBlack[3] = {
-								white[0] - black[0],
+								white[2] - black[2],
 								white[1] - black[1],
-								white[2] - black[2]
+								white[0] - black[0]
 							};
 
 							float hudB =  0.0f;
@@ -1207,7 +1117,7 @@ void CAfxTwinStream::CaptureEnd()
 							((unsigned char *)pBufferA)[y*newImagePitchA + x * 4 + 0] = (unsigned char)hudB;
 							((unsigned char *)pBufferA)[y*newImagePitchA + x * 4 + 1] = (unsigned char)hudG;
 							((unsigned char *)pBufferA)[y*newImagePitchA + x * 4 + 2] = (unsigned char)hudR;
-							((unsigned char *)pBufferA)[y*newImagePitchA + x * 4 + 3] = (unsigned char)(alpha);
+							((unsigned char *)pBufferA)[y*newImagePitchA + x * 4 + 3] = (unsigned char)alpha;
 						}
 					}
 
@@ -1579,7 +1489,7 @@ CAfxBaseFxStream::CAfxBaseFxStream()
 	DoBloomAndToneMapping = false;
 	DoDepthOfField = false;
 
-	SetAction(m_ClientEffectTexturesAction, m_Shared.DrawAction_get());
+		SetAction(m_ClientEffectTexturesAction, m_Shared.DrawAction_get());
 	SetAction(m_WorldTexturesAction, m_Shared.DrawAction_get());
 	SetAction(m_SkyBoxTexturesAction, m_Shared.DrawAction_get());
 	SetAction(m_StaticPropTexturesAction, m_Shared.DrawAction_get());
@@ -5966,18 +5876,13 @@ IAfxMatRenderContextOrg * CAfxStreams::PreviewStream(IAfxMatRenderContextOrg * c
 void CAfxStreams::DoRenderView(CCSViewRender_RenderView_t fn, void* This, void* Edx, const SOURCESDK::CViewSetup_csgo &view, const SOURCESDK::CViewSetup_csgo &hudViewSetup, int nClearFlags, int whatToDraw)
 {
 #ifdef AFX_INTEROP
-	if (AfxInterop::Enabled())
+	if (AfxInterop::Enabled() && AfxInterop::Active())
 	{
 		AfxInterop::OnRenderView(view, g_InteropFeatures);
 
 		if (g_InteropFeatures.GetDepthRequired())
 		{
 			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CAfxInteropOverrideDepthBegin_Functor()));
-		}
-
-		if (g_InteropFeatures.GetEnabled())
-		{
-			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new AfxInteropDrawingDrawingThreadPrepareDraw(AfxInterop::GetFrameCount())));
 		}
 	}
 #endif
@@ -5997,23 +5902,14 @@ void CAfxStreams::DoRenderView(CCSViewRender_RenderView_t fn, void* This, void* 
 	}
 
 #ifdef AFX_INTEROP
-	if (AfxInterop::Enabled())
+	if (AfxInterop::Enabled() && AfxInterop::Active())
 	{
-		if (g_InteropFeatures.GetEnabled())
-		{
-			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CAfxInteropOnRenderViewEnd_Functor()));
-		}
+		AfxInterop::OnRenderViewEnd();
 
 		if (g_InteropFeatures.GetDepthRequired())
 		{
 			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CAfxInteropOverrideDepthEnd_Functor()));
 		}
-
-		if (g_InteropFeatures.GetEnabled())
-		{
-			AfxInterop::OnRenderViewEnd();
-		}
-
 	}
 #endif
 }
@@ -6368,14 +6264,13 @@ void CAfxStreams::On_DrawTranslucentRenderables(SOURCESDK::CSGO::CRendering3dVie
 			IAfxMatRenderContext * afxMatRenderContext = GetCurrentContext();
 			IAfxMatRenderContextOrg * orgCtx = afxMatRenderContext->GetOrg();
 
-			AfxInterop::On_DrawTranslucentRenderables(rendering3dView, bInSkybox, bShadowDepth, afterCall);
-
 			if (beforeDepth)
 			{
+				// TODO.
 				QueueOrExecute(orgCtx, new CAfxLeafExecute_Functor(new CAfxInteropDrawDepth_Functor(true, m_CurrentView->zNear, m_CurrentView->zFar, m_CurrentView->zNear, m_CurrentView->zFar)));
 			}
 
-			QueueOrExecute(orgCtx, new CAfxLeafExecute_Functor(new CAfxInteropDrawingThreadFunctor_On_DrawTranslucentRenderables(bInSkybox, bShadowDepth, afterCall)));
+			AfxInterop::On_DrawTranslucentRenderables(afxMatRenderContext, rendering3dView, bInSkybox, bShadowDepth, afterCall);
 		}
 	}
 #endif
@@ -6401,7 +6296,7 @@ void CAfxStreams::OnDrawingHudBegin(void)
 		{
 			QueueOrExecute(orgCtx, new CAfxLeafExecute_Functor(new CAfxInteropDrawDepth_Functor(true, m_CurrentView->zNear, m_CurrentView->zFar, m_CurrentView->zNear, m_CurrentView->zFar)));
 
-			QueueOrExecute(orgCtx, new CAfxLeafExecute_Functor(new AfxInteropDrawingThreadBeforeHud_Functor()));
+			AfxInterop::OnBeforeHud(afxMatRenderContext);
 		}
 	}
 #endif
@@ -6434,7 +6329,7 @@ void CAfxStreams::OnDrawingHudEnd(void)
 
 		if (g_InteropFeatures.AfterHud)
 		{
-			QueueOrExecute(orgCtx, new CAfxLeafExecute_Functor(new AfxInteropDrawingThreadAfterHud_Functor()));
+			AfxInterop::OnAfterHud(afxMatRenderContext);
 		}
 	}
 #endif
