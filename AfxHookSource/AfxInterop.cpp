@@ -126,7 +126,7 @@ namespace AfxInterop {
 		{
 			ConnectEngine();
 
-			if (m_EngineWantsConnect) QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CConnectFunctor(this)));
+			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CConnectFunctor(this)));
 
 			if (!m_EngineConnected) return;
 
@@ -574,6 +574,11 @@ namespace AfxInterop {
 				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterTranslucent)) { errorLine = __LINE__; goto error; }
 				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.BeforeHud)) { errorLine = __LINE__; goto error; }
 				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterHud)) { errorLine = __LINE__; goto error; }
+
+				if (6 == m_EngineVersion)
+				{
+					if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterRenderView)) { errorLine = __LINE__; goto error; }
+				}
 			}
 
 			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new CPrepareDrawFunctor(this, AfxInterop::GetFrameCount())));
@@ -596,7 +601,8 @@ namespace AfxInterop {
 				if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 			}
 
-			QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new COnRenderViewEndFunctor(this)));
+			if(m_EngineVersion != 6 || m_EnabledFeatures.AfterRenderView)
+				QueueOrExecute(GetCurrentContext()->GetOrg(), new CAfxLeafExecute_Functor(new COnRenderViewEndFunctor(this)));
 
 			return;
 
@@ -707,11 +713,15 @@ namespace AfxInterop {
 
 		void OnBeforeHud(IAfxMatRenderContext* ctx)
 		{
+			if (!m_EnabledFeatures.BeforeHud) return;
+
 			QueueOrExecute(ctx->GetOrg(), new CAfxLeafExecute_Functor(new CBeforeHudFunctor(this)));
 		}
 
 		void OnAfterHud(IAfxMatRenderContext* ctx)
 		{
+			if (!m_EnabledFeatures.AfterHud) return;
+
 			QueueOrExecute(ctx->GetOrg(), new CAfxLeafExecute_Functor(new CAfterHudFunctor(this)));
 		}
 
@@ -973,11 +983,16 @@ namespace AfxInterop {
 
 			if (!m_DrawingConnected) return;
 
-			if (6 == m_DrawingVersion) return;
-
 			int errorLine = 0;
 
-			if (!WriteInt32(m_hDrawingPipe, DrawingMessage_OnRenderViewEnd)) { errorLine = __LINE__; goto error; }
+			if (6 == m_DrawingVersion)
+			{
+				if (!HandleVersion6DrawingMessage(DrawingMessage_OnRenderViewEnd, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
+			}
+			else
+			{
+				if (!WriteInt32(m_hDrawingPipe, DrawingMessage_OnRenderViewEnd)) { errorLine = __LINE__; goto error; }
+			}
 
 			return;
 
@@ -1563,7 +1578,7 @@ namespace AfxInterop {
 						{
 							IDirect3DTexture9* texture = NULL;
 
-							HRESULT hr = device->CreateTexture(texWidth, texHeight, 1, 0, (D3DFORMAT)d3dFormat, D3DPOOL_DEFAULT, &texture, &sharedTextureHandle);
+							HRESULT hr = device->CreateTexture(texWidth, texHeight, 1, D3DUSAGE_RENDERTARGET, (D3DFORMAT)d3dFormat, D3DPOOL_DEFAULT, &texture, &sharedTextureHandle);
 
 							if (SUCCEEDED(hr))
 							{
@@ -1575,7 +1590,7 @@ namespace AfxInterop {
 
 					if (m_SharedSurface.Handle && texWidth && texHeight)
 					{
-						AfxDrawRect(m_SharedSurface.Texture, 0, 0, texWidth, texHeight, 0.5f + 0 / (float)texWidth, 0.5f + 0 / (float)texHeight, 0.5f + (0 + texWidth - 1) / (float)texWidth, 0.5f + (0 + texHeight - 1) / (float)texHeight);
+						AfxDrawRect(m_SharedSurface.Texture, 0, 0, texWidth, texHeight, 0, 0, 1, 1);
 						AfxD3D_WaitForGPU(); // TODO: Improve. We are slowing down more than we have to.
 					}
 					
