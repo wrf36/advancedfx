@@ -6,11 +6,23 @@
 
 <release>
 <name>AfxHookSource</name>
+<version>1.79.4</version>
+<time>2020-04-29T08:34Z</time>
+<changes>
+<change type="fixed">Fixed afx/wh.cfg.</change>
+<change type="fixed">Fixed #17 Gloves being part of the weaponmodelsaction rather than playermodelsaction.</change>
+<change type="fixed">Fixed #304 player model shadows not visible on mirv_streams world layer.</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
 <version>1.79.3</version>
 <time>2020-04-07T10:19Z</time>
 <changes>
 <change type="fixed">Fixed #307 Jittery camera and mouse movement on mirv_input camera.</change>
-<change type="fixed">Addressed #308 Multi-stream recording with ffmpeg cause game crashes: Changed material tracking/referencing in mirv_streams.</change>
+<change type="fixed">Addressed #314 Multi-stream recording with ffmpeg cause game crashes: Changed material tracking/referencing in mirv_streams.</change>
 </changes>
 </release>
 
