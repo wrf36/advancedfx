@@ -11,6 +11,7 @@
 #include "MirvCalcs.h"
 #include "AfxCommandLine.h"
 #include "AfxStreams.h"
+#include "csgo_GameEvents.h"
 
 #include <Windows.h>
 
@@ -68,7 +69,7 @@ extern SOURCESDK::IVRenderView_csgo * g_pVRenderView_csgo;
 namespace AfxInterop {
 	IAfxInteropSurface* m_Surface = NULL;
 
-	class CInteropClient
+	class CInteropClient : public CAfxGameEventListenerSerialzer
 	{
 	public:
 		CInteropClient(const char * pipeName) : m_EnginePipeName(pipeName)
@@ -100,6 +101,11 @@ namespace AfxInterop {
 			if (!SendCommands(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
 			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
+
+			if (7 <= m_EngineVersion)
+			{
+				if(!ReadGameEventSettings(true)) { errorLine = __LINE__; goto error; }
+			}
 
 			UINT32 commandCount;
 
@@ -575,7 +581,7 @@ namespace AfxInterop {
 				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.BeforeHud)) { errorLine = __LINE__; goto error; }
 				if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterHud)) { errorLine = __LINE__; goto error; }
 
-				if (6 == m_EngineVersion)
+				if (6 <= m_EngineVersion && m_EngineVersion <= 7)
 				{
 					if (!ReadBoolean(m_hEnginePipe, m_EnabledFeatures.AfterRenderView)) { errorLine = __LINE__; goto error; }
 				}
@@ -715,14 +721,48 @@ namespace AfxInterop {
 		{
 			if (!m_EnabledFeatures.BeforeHud) return;
 
+			int errorLine = 0;
+
+			if(m_EngineVersion == 7)
+			{
+				if (!m_EngineConnected) return;
+
+				if (!WriteInt32(m_hEnginePipe, EngineMessage_OnBeforeHud)) { errorLine = __LINE__; goto error; }
+				if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
+			}
+
 			QueueOrExecute(ctx->GetOrg(), new CAfxLeafExecute_Functor(new CBeforeHudFunctor(this)));
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::OnBeforeHud: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
 		}
 
 		void OnAfterHud(IAfxMatRenderContext* ctx)
 		{
 			if (!m_EnabledFeatures.AfterHud) return;
 
+			int errorLine = 0;
+
+			if (m_EngineVersion == 7)
+			{
+				if (!m_EngineConnected) return;
+
+				if (!WriteInt32(m_hEnginePipe, EngineMessage_OnAfterHud)) { errorLine = __LINE__; goto error; }
+				if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
+			}
+
 			QueueOrExecute(ctx->GetOrg(), new CAfxLeafExecute_Functor(new CAfterHudFunctor(this)));
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::OnAfterHud: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
 		}
 
 		void Shutdown() {
@@ -737,7 +777,7 @@ namespace AfxInterop {
 
 			if (!m_DrawingConnected) return;
 
-			if (6 == m_DrawingVersion)
+			if (6 <= m_DrawingVersion && m_DrawingVersion <= 7)
 			{
 				m_DrawingSkip = false;
 				return;
@@ -885,7 +925,7 @@ namespace AfxInterop {
 				}
 
 
-				if (6 == m_DrawingVersion)
+				if (6 <= m_DrawingVersion && m_DrawingVersion <= 7)
 				{
 					if(!HandleVersion6DrawingMessage(message, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
 				}
@@ -920,7 +960,7 @@ namespace AfxInterop {
 
 			int errorLine = 0;
 
-			if (6 == m_DrawingVersion)
+			if (6 <= m_DrawingVersion && m_DrawingVersion <= 7)
 			{
 				if (!HandleVersion6DrawingMessage(DrawingMessage_BeforeHud, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
 			}
@@ -954,7 +994,7 @@ namespace AfxInterop {
 
 			int errorLine = 0;
 
-			if (6 == m_DrawingVersion)
+			if (6 <= m_DrawingVersion && m_DrawingVersion <= 7)
 			{
 				if (!HandleVersion6DrawingMessage(DrawingMessage_AfterHud, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
 			}
@@ -985,7 +1025,7 @@ namespace AfxInterop {
 
 			int errorLine = 0;
 
-			if (6 == m_DrawingVersion)
+			if (6 <= m_DrawingVersion && m_DrawingVersion <= 7)
 			{
 				if (!HandleVersion6DrawingMessage(DrawingMessage_OnRenderViewEnd, m_DrawingFrameCount)) { errorLine = __LINE__; goto error; }
 			}
@@ -1170,6 +1210,7 @@ namespace AfxInterop {
 							{
 							case 5:
 							case 6:
+							case 7:
 								break;
 							default:
 								Tier0_Warning("Version %d is not supported.\n", m_EngineVersion);
@@ -1183,6 +1224,11 @@ namespace AfxInterop {
 							if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
 
 							if (!ReadBoolean(m_hEnginePipe, m_EngineServer64Bit)) { errorLine = __LINE__; goto error; }
+
+							if (7 <= m_EngineVersion)
+							{
+								if(!ReadGameEventSettings(false)) { errorLine = __LINE__; goto error; }
+							}
 
 							m_DrawingVersion = m_EngineVersion;
 							m_EngineConnected = true;
@@ -1215,6 +1261,8 @@ namespace AfxInterop {
 			m_EngineConnected = false;
 			m_EnginePreConnect = false;
 			m_DrawingWantsConnect = false;
+
+			g_AfxGameEvents.RemoveListener(this);
 		}
 
 		bool Console_Edit(IWrpCommandArgs* args)
@@ -1284,6 +1332,150 @@ namespace AfxInterop {
 		~CInteropClient()
 		{
 			Shutdown();
+		}
+
+		virtual bool CAfxGameEventListenerSerialzer::BeginSerialize() override
+		{
+			if (!m_EngineConnected)
+				return false;
+
+			return true;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::EndSerialize() override
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if (!Flush(m_hEnginePipe)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::EndSerialize: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::WriteCString(const char* value) override
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if(!WriteCString(m_hEnginePipe, value)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::WriteCString: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::WriteFloat(float value) override
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if(!WriteSingle(m_hEnginePipe, value)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::WriteFloat: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::WriteLong(long value) override
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if(!WriteInt32(m_hEnginePipe, value)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::WriteLong: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::WriteShort(short value) override
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if(!WriteInt16(m_hEnginePipe, value)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::WriteShort: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::WriteByte(char value)
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if(!WriteByte(m_hEnginePipe, (BYTE)value)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::WriteByte: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::WriteBoolean(bool value)
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if(!WriteBoolean(m_hEnginePipe, value)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::WriteBoolean: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
+		}
+
+		virtual void CAfxGameEventListenerSerialzer::WriteUInt64(unsigned __int64 value)
+		{
+			if (!m_EngineConnected)
+				return;
+
+			int errorLine = 0;
+
+			if(!WriteUInt64(m_hEnginePipe, value)) { errorLine = __LINE__; goto error; }
+
+			return;
+
+		error:
+			Tier0_Warning("AfxInterop::CAfxGameEventListenerSerialzer::WriteUInt64: Error in line %i (%s).\n", errorLine, m_EnginePipeName.c_str());
+			DisconnectEngine();
+			return;
 		}
 
 	private:
@@ -1622,7 +1814,9 @@ namespace AfxInterop {
 			EngineMessage_BeforeTranslucentShadow = 9,
 			EngineMessage_AfterTranslucentShadow = 10,
 			EngineMessage_BeforeTranslucent = 11,
-			EngineMessage_AfterTranslucent = 12
+			EngineMessage_AfterTranslucent = 12,
+			EngineMessage_OnBeforeHud = 13,
+			EngineMessage_OnAfterHud = 14
 		};
 
 		class CConsole
@@ -1860,6 +2054,10 @@ namespace AfxInterop {
 			return WriteByte(hFile, (BYTE)value);
 		}
 
+		bool WriteInt16(HANDLE hFile, INT16 value) {
+			return WriteBytes(hFile, &value, 0, sizeof(value));
+		}
+
 		bool WriteUInt32(HANDLE hFile, UINT32 value) {
 			return WriteBytes(hFile, &value, 0, sizeof(value));
 		}
@@ -1885,9 +2083,21 @@ namespace AfxInterop {
 				&& WriteUInt32(hFile, value);
 		}
 
+		bool WriteUInt64(HANDLE hFile, unsigned __int64 value) {
+			return WriteBytes(hFile, &value, 0, sizeof(value));
+		}
+
 		bool WriteSingle(HANDLE hFile, FLOAT value)
 		{
 			return WriteBytes(hFile, &value, 0, sizeof(value));
+		}
+
+		bool WriteCString(HANDLE hFile, const char* value)
+		{
+			UINT32 length = (UINT32)(strlen(value) + 1);
+
+			return WriteCompressedUInt32(hFile, length)
+				&& WriteBytes(hFile, (LPVOID)value, 0, length);
 		}
 
 		bool WriteStringUTF8(HANDLE hFile, const std::string value)
@@ -1909,6 +2119,98 @@ namespace AfxInterop {
 		{
 			if (!FlushFileBuffers(hFile))
 				return false;
+
+			return true;
+		}
+
+		bool ReadGameEventSettings(bool delta)
+		{
+			if (!delta)
+			{
+				bool bEnable;
+
+				if (!ReadBoolean(m_hEnginePipe, bEnable)) return false;
+
+				if (!bEnable) return true;
+
+				g_AfxGameEvents.AddListener(this);
+				CAfxGameEventListenerSerialzer::Restart();
+			}
+
+			std::string eventName;
+			unsigned int listSize;
+
+			if (delta)
+			{
+				bool bChanged;
+
+				// Read if any changes:
+				if (!ReadBoolean(m_hEnginePipe, bChanged)) return false;
+
+				if (!bChanged) return true;
+			}
+
+			if (delta)
+			{
+				// Read whitelist removals:
+
+				if (!ReadCompressedUInt32(m_hEnginePipe, listSize)) return false;
+
+				for (unsigned int i = 0; i < listSize; ++i)
+				{
+					if (!ReadStringUTF8(m_hEnginePipe, eventName)) return false;
+					CAfxGameEventListenerSerialzer::UnWhiteList(eventName.c_str());
+				}
+			}
+
+			// Read whitelist additions:
+
+			if (!ReadCompressedUInt32(m_hEnginePipe, listSize)) return false;
+
+			for(unsigned int i = 0; i < listSize; ++i)
+			{
+				if (!ReadStringUTF8(m_hEnginePipe, eventName)) return false;
+				CAfxGameEventListenerSerialzer::WhiteList(eventName.c_str());
+			}
+
+			if (delta)
+			{
+				// Read blacklist removals:
+
+				if (!ReadCompressedUInt32(m_hEnginePipe, listSize)) return false;
+
+				for (unsigned int i = 0; i < listSize; ++i)
+				{
+					if (!ReadStringUTF8(m_hEnginePipe, eventName)) return false;
+					CAfxGameEventListenerSerialzer::UnBlackList(eventName.c_str());
+				}
+			}
+
+			// Read blacklist additions:
+
+			if (!ReadCompressedUInt32(m_hEnginePipe, listSize)) return false;
+
+			for (unsigned int i = 0; i < listSize; ++i)
+			{
+				if (!ReadStringUTF8(m_hEnginePipe, eventName)) return false;
+				CAfxGameEventListenerSerialzer::BlackList(eventName.c_str());
+			}
+
+			// Read enrichments:
+
+			if (!ReadCompressedUInt32(m_hEnginePipe, listSize)) return false;
+
+			for (unsigned int i = 0; i < listSize; ++i)
+			{
+				std::string propertyName;
+				unsigned int enrichmentType;
+
+				if (!ReadStringUTF8(m_hEnginePipe, eventName)) return false;
+				if (!ReadStringUTF8(m_hEnginePipe, propertyName)) return false;
+				if (!ReadUInt32(m_hEnginePipe, enrichmentType)) return false;
+				
+				CAfxGameEventListenerSerialzer::EnrichSet(eventName.c_str(), propertyName.c_str(), enrichmentType);
+			}
 
 			return true;
 		}
