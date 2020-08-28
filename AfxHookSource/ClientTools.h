@@ -92,14 +92,14 @@ public:
 		m_RecordCamera = value;
 	}
 
-	bool RecordViewModel_get(void)
+	int RecordViewModels_get(void)
 	{
-		return m_RecordViewModel;
+		return m_RecordViewModels;
 	}
 
-	void RecordViewModel_set(bool value)
+	void RecordViewModels_set(int value)
 	{
-		m_RecordViewModel = value;
+		m_RecordViewModels = value;
 	}
 
 	bool RecordInvisible_get(void)
@@ -110,6 +110,16 @@ public:
 	void RecordInvisible_set(bool value)
 	{
 		m_RecordInvisible = value;
+	}
+
+	int RecordPlayerCameras_get(void)
+	{
+		return m_RecordPlayerCameras;
+	}
+
+	void RecordPlayerCameras_set(int value)
+	{
+		m_RecordPlayerCameras = value;
 	}
 
 protected:
@@ -143,9 +153,10 @@ private:
 	int m_Debug = 0;
 	bool m_RecordCamera = true;
 	bool m_RecordPlayers = true;
+	int m_RecordPlayerCameras = -1;
 	bool m_RecordWeapons = true;
 	bool m_RecordProjectiles = true;
-	bool m_RecordViewModel = false;
+	int m_RecordViewModels = 0;
 	bool m_RecordInvisible = false;
 
 	void Dictionary_Clear()
