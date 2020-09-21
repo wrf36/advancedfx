@@ -253,6 +253,7 @@ GameEventUnserializer.prototype.unserialize = function unserialize(bufferReader)
 {
 	var eventId = bufferReader.readInt32LE();
 	var gameEvent;
+	
 	if(0 == eventId)
 	{
 		gameEvent = new GameEventDescription(bufferReader);
@@ -260,7 +261,7 @@ GameEventUnserializer.prototype.unserialize = function unserialize(bufferReader)
 		
 		if(this.enrichments[gameEvent.eventName]) gameEvent.enrichments = this.enrichments[gameEvent.eventName];
 	}
-	else gameEvent = this.knownEvents[gameEvent.eventId];
+	else gameEvent = this.knownEvents[eventId];
 	
 	if(undefined === gameEvent) throw new "GameEventUnserializer.prototype.unserialize";
 	
@@ -634,6 +635,10 @@ wss.on('connection', function(newWs) {
 								'exec\0mirv_pgl events enabled 1\0'
 							,'utf8')), {binary: true});
 							
+							ws.send(new Uint8Array(Buffer.from(
+								'exec\0mirv_pgl events useCache 1\0'
+							,'utf8')), {binary: true});
+
 							ws.send(new Uint8Array(Buffer.from(
 								'transEnd\0'
 							,'utf8')), {binary: true});

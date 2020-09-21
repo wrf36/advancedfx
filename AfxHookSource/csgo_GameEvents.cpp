@@ -38,13 +38,13 @@ enum CsgoGameEventKeyType
 
 void CAfxGameEventListenerSerialzer::FireHandledEvent(SOURCESDK::CSGO::CGameEvent * gameEvent)
 {
-	if (!BeginSerialize()) return;
-
 	if (SOURCESDK::CSGO::CGameEventDescriptor * descriptor = gameEvent->m_pDescriptor)
 	{
+		if (!BeginSerialize()) return;
+
 		int eventId = descriptor->eventid;
 
-		if (m_KnownEventIds.end() != m_KnownEventIds.find(eventId))
+		if (m_UseCache && m_KnownEventIds.end() != m_KnownEventIds.find(eventId))
 		{
 			WriteLong(eventId);
 		}
@@ -87,6 +87,8 @@ void CAfxGameEventListenerSerialzer::FireHandledEvent(SOURCESDK::CSGO::CGameEven
 			}
 
 			WriteBoolean(false);
+
+			m_KnownEventIds.insert(eventId);
 		}
 
 		if (TransmitClientTime)
@@ -151,7 +153,6 @@ void CAfxGameEventListenerSerialzer::FireHandledEvent(SOURCESDK::CSGO::CGameEven
 						break;
 					case CsgoGameEventKeyType_Uint64:
 						WriteUInt64(gameEvent->GetUint64(keyName));
-						break;
 						break;
 					default:
 						break;
@@ -307,9 +308,9 @@ void CAfxGameEventListenerSerialzer::FireHandledEvent(SOURCESDK::CSGO::CGameEven
 				}
 			}
 		}
-	}
 
-	EndSerialize();
+		EndSerialize();
+	}
 }
 
 bool Hook_csgo_GameEvents(void);
