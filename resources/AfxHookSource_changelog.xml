@@ -6,6 +6,38 @@
 
 <release>
 <name>AfxHookSource</name>
+<version>1.92.0</version>
+<time>2020-10-08T17:53Z</time>
+<changes>
+<change type="fixed">Fixed #399 Misplacements of recordViewmodels and recordPlayerCameras.</change>
+<change type="fixed">Fixed recordViewmodels viewmodel animations not interpolating.</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.91.4</version>
+<time>2020-09-24T05:31Z</time>
+<changes>
+<change type="fixed">Fixed #395 (mirv_pov) Occlusion flickering.</change>
+<change type="fixed">Fixed #396 (mirv_pov) CS:GO crashes when attached player disconnects.</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.91.3</version>
+<time>2020-09-22T07:22Z</time>
+<changes>
+<change type="fixed">Fixed mirv_pov for demos where player is not there right at start, thanks to csgo-demo-manager.com for helping with testing / reporting it.</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
 <version>1.91.0</version>
 <time>2020-09-21T08:15Z</time>
 <changes>

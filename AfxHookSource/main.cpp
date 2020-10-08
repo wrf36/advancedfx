@@ -204,6 +204,8 @@ public:
 			fov
 		);
 
+		if (CClientTools::Instance()) CClientTools::Instance()->OnAfterSetupEngineView();
+
 		return bRet;
 	}
 	
@@ -1163,6 +1165,8 @@ __declspec(naked) void CAfxBaseClientDll::_UNKOWN_036(void)
 
 int g_iForcePostDataUpdateChanged = -1;
 
+typedef void(__fastcall* csgo_C_BasePlayer_SetAsLocalPlayer_t)(void* Ecx, void* Edx);
+
 //__declspec(naked)
 void CAfxBaseClientDll::FrameStageNotify(SOURCESDK::CSGO::ClientFrameStage_t curStage)
 { // NAKED_JMP_CLASSMEMBERIFACE_FN(CAfxBaseClientDll, m_Parent, 37)
@@ -1186,9 +1190,43 @@ void CAfxBaseClientDll::FrameStageNotify(SOURCESDK::CSGO::ClientFrameStage_t cur
 		g_AfxStreams.BeforeFrameStart();
 		break;
 	case SOURCESDK::CSGO::FRAME_NET_UPDATE_START:
+		// Switch to local player during updates:
+		if (g_i_MirvPov && 1 != g_i_MirvPov)
+		{
+			if (SOURCESDK::IClientEntity_csgo* ce = SOURCESDK::g_Entitylist_csgo->GetClientEntity(1))
+			{
+				if (SOURCESDK::C_BaseEntity_csgo* be = ce->GetBaseEntity())
+				{
+					if (be->IsPlayer())
+					{
+						static csgo_C_BasePlayer_SetAsLocalPlayer_t setAsLocalPlayer = (csgo_C_BasePlayer_SetAsLocalPlayer_t)AFXADDR_GET(csgo_C_BasePlayer_SetAsLocalPlayer);
+
+						setAsLocalPlayer(be, 0);
+					}
+				}
+			}
+		}
 		break;
 	case SOURCESDK::CSGO::FRAME_NET_UPDATE_END:
 		firstFrameAfterNetUpdateEnd = true;
+		break;
+	case SOURCESDK::CSGO::FRAME_NET_UPDATE_POSTDATAUPDATE_START:
+		// Switch back to target pov player before updates are applied:
+		if (g_i_MirvPov && 1 != g_i_MirvPov)
+		{
+			if (SOURCESDK::IClientEntity_csgo* ce = SOURCESDK::g_Entitylist_csgo->GetClientEntity(g_i_MirvPov))
+			{
+				if (SOURCESDK::C_BaseEntity_csgo* be = ce->GetBaseEntity())
+				{
+					if (be->IsPlayer())
+					{
+						static csgo_C_BasePlayer_SetAsLocalPlayer_t setAsLocalPlayer = (csgo_C_BasePlayer_SetAsLocalPlayer_t)AFXADDR_GET(csgo_C_BasePlayer_SetAsLocalPlayer);
+
+						setAsLocalPlayer(be, 0);
+					}
+				}
+			}
+		}
 		break;
 	case SOURCESDK::CSGO::FRAME_RENDER_START:
 
@@ -1207,6 +1245,32 @@ void CAfxBaseClientDll::FrameStageNotify(SOURCESDK::CSGO::ClientFrameStage_t cur
 		CAfxStreams::MainThreadInitialize();
 
 		break;
+
+	case SOURCESDK::CSGO::FRAME_NET_UPDATE_POSTDATAUPDATE_END:
+		if (g_i_MirvPov && 1 != g_i_MirvPov)
+		{
+			if (SOURCESDK::IClientEntity_csgo* cePov = SOURCESDK::g_Entitylist_csgo->GetClientEntity(g_i_MirvPov))
+			{
+				// Make sure the GOTV player doesn't think it's the local one as well:
+				if (SOURCESDK::IClientEntity_csgo* ce = SOURCESDK::g_Entitylist_csgo->GetClientEntity(1))
+				{
+					if (SOURCESDK::C_BaseEntity_csgo* be = ce->GetBaseEntity())
+					{
+						if (be->IsPlayer())
+						{
+							bool* pOsLocalPlayer = (bool*)((char*)be + AFXADDR_GET(csgo_C_BasePlayer_ofs_m_bIsLocalPlayer));
+							*pOsLocalPlayer = false;
+						}
+					}
+				}
+			}
+		}
+		if (-1 != g_iForcePostDataUpdateChanged)
+		{
+			if (SOURCESDK::IClientEntity_csgo* ce = SOURCESDK::g_Entitylist_csgo->GetClientEntity(g_iForcePostDataUpdateChanged))
+				ce->PostDataUpdate(SOURCESDK::CSGO::DATA_UPDATE_CREATED);
+		}
+		break;
 	}
 
 	m_Parent->FrameStageNotify(curStage);
@@ -1222,32 +1286,6 @@ void CAfxBaseClientDll::FrameStageNotify(SOURCESDK::CSGO::ClientFrameStage_t cur
 	case SOURCESDK::CSGO::FRAME_RENDER_END:
 		csgo_Audio_FRAME_RENDEREND();
 		Shared_AfterFrameRenderEnd();
-		break;
-
-	case SOURCESDK::CSGO::FRAME_NET_UPDATE_POSTDATAUPDATE_END:
-		/*
-		if (g_i_MirvPov)
-		{
-			if (SOURCESDK::IClientEntity_csgo* ce = SOURCESDK::g_Entitylist_csgo->GetClientEntity(g_i_MirvPov))
-			{
-				if (SOURCESDK::C_BaseEntity_csgo* be = ce->GetBaseEntity())
-				{
-					if (be->IsPlayer())
-					{
-						bool isLocalPlayer = *(bool *)((char *)be + 0x3624);
-						SOURCESDK::QAngle angles = be->EyeAngles();
-						Tier0_Msg("%i: %f %f %f\n", isLocalPlayer ? 1 : 0, angles.x, angles.y, angles.z);
-						//if (g_VEngineClient) g_VEngineClient->SetViewAngles(angles);
-					}
-				}
-			}
-		}
-		*/
-		if (-1 != g_iForcePostDataUpdateChanged)
-		{
-			if(SOURCESDK::IClientEntity_csgo* ce = SOURCESDK::g_Entitylist_csgo->GetClientEntity(g_iForcePostDataUpdateChanged))
-				ce->PostDataUpdate(SOURCESDK::CSGO::DATA_UPDATE_CREATED);
-		}
 		break;
 	}
 }

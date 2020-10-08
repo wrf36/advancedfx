@@ -6,6 +6,47 @@
 
 <release>
 <name>HLAE</name>
+<version>2.109.0</version>
+<time>2020-10-08T17:53Z</time>
+<changes>
+<change type="updated">Included AfxHookSource 1.92.0 (2020-10-08T17:53Z).</change>
+<change type="added">Added check if HLAE is manually installed in unsuitable folder #398</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.108.4</version>
+<time>2020-09-24T05:31Z</time>
+<changes>
+<change type="updated">Included AfxHookSource 1.91.4 (2020-09-24T05:31Z).</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.108.3</version>
+<time>2020-09-22T07:22Z</time>
+<changes>
+<change type="updated">Included AfxHookSource 1.91.3 (2020-09-22T07:22Z).</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
+<version>2.108.2</version>
+<time>2020-09-21T19:09Z</time>
+<changes>
+<change type="updated">Included AfxHookSource 1.91.2 (2020-09-21T19:09Z).</change>
+</changes>
+</release>
+
+
+<release>
+<name>HLAE</name>
 <version>2.108.0</version>
 <time>2020-09-21T08:15Z</time>
 <changes>
