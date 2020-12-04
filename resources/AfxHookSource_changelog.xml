@@ -6,6 +6,46 @@
 
 <release>
 <name>AfxHookSource</name>
+<version>1.92.4</version>
+<time>2020-12-04T10:46Z</time>
+<changes>
+<change type="fixed">Adjusted to CS:GO 12/03/2020 update: Fixes mirv_pov crashing / error adresses.cpp:1965.</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.92.3</version>
+<time>2020-12-01T18:39Z</time>
+<changes>
+<change type="fixed">mirv_calcs cam smooth calc: Fixed the map change problem and also the crash problem if the delta time gets too large. If you customized the timing (halfTimeXXX) you will need to divide them by ln(2)^2 = approximately 2.1</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.92.2</version>
+<time>2020-11-03T16:48Z</time>
+<changes>
+<change type="fixed">Fixed #402 mirv_pov and FOV zooming, thanks to lorem.</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
+<version>1.92.1</version>
+<time>2020-10-20T12:04Z</time>
+<changes>
+<change type="fixed">Fixed HUD flickering when mirv_pov player was spectating another player.</change>
+</changes>
+</release>
+
+
+<release>
+<name>AfxHookSource</name>
 <version>1.92.0</version>
 <time>2020-10-08T17:53Z</time>
 <changes>
