@@ -46,7 +46,7 @@ Notice:
 	mkdir Release
 	cd Release
 	cmake -DCMAKE_BUILD_TYPE=Release -G "Visual Studio 16 2019" -T "v142" -A "Win32" ../..
-	cmake --build . -v -- -r
+	cmake --build . --config Release -v -- -r
 	cmake --install . -v
 	
 [X] After that the installer and the zip can be found in "C:\<HLAESRC>\advancedfx\build\Release".

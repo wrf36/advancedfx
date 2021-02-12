@@ -1,5 +1,5 @@
-#ifndef ADVANCEDFX_LIBRARY_H
-#define ADVANCEDFX_LIBRARY_H
+#ifndef ADVANCEDFX_MODULE_H
+#define ADVANCEDFX_MODULE_H
 #include "AdvancedfxTypes.h"
 
 #if defined _WIN32 || defined __CYGWIN__
@@ -23,13 +23,7 @@
 #endif
 #endif
 
-
-
-//
-// Factory
-
-
-#define ADVANCEDFX_LIBRARY_FN_IDENTIFIER AdvancedfxModuleInit
+#define ADVANCEDFX_MODULE_INIT_IDENTIFIER AdvancedfxModuleInit
 
 #ifdef __cplusplus
 #define ADVANCEDFX_EXTERNC extern "C"
@@ -37,8 +31,20 @@
 #define ADVANCEDFX_EXTERNC
 #endif
 
-#define ADVANCEDFX_FACTORY_FN ADVANCEDFX_EXTERNC void ADVANCEDFX_LIBRARY_FN_IDENTIFIER (AdvancedfxProcessGet processGet)
+struct AdvancedfxModuleClass
+{
+    /**
+	 * @param event will remain strongly referenced by This.
+	 */
+	AdvancedfxBool (*DeletingAdd)(void * This, struct AdvancedfxEventClass ** event);
 
+	void (*DeletingRemove)(void * This, struct AdvancedfxEventClass ** event);
 
+	void (*AddRef)(void * This);
+
+	void (*Release)(void * This);
+};
+
+#define ADVANCEDFX_MODULE_INIT_FN ADVANCEDFX_EXTERNC struct AdvancedfxModuleRefClass ** ADVANCEDFX_MODULE_INIT_IDENTIFIER (struct AdvancedfxRegistryClass ** registry)
 
 #endif

@@ -47,7 +47,7 @@
 //
 // AdvancedfxVoid
 
-#define ADVANCEDFX_VOID_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x6C51D0CF0,x3653,0x43AE,0xB753,0xC1,0x07,0x33,0xDD,0x19,0x9E)
+#define AdvancedfxVoid_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x6C51D0CF0,x3653,0x43AE,0xB753,0xC1,0x07,0x33,0xDD,0x19,0x9E)
 
 
 //
@@ -55,10 +55,10 @@
 
 typedef unsigned char AdvancedfxBool;
 
-#define ADAVANCEDFX_FALSE 0
-#define ADAVANCEDFX_TRUE 1
+#define ADVANCEDFX_FALSE 0
+#define ADVANCEDFX_True 1
 
-#define ADVANCEDFX_BOOL_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0xF5E02116,0xD623,0x499F,0xABBF,0x2B7EAA4AB8DF)
+#define AdvancedfxBool_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0xF5E02116,0xD623,0x499F,0xABBF,0x2B7EAA4AB8DF)
 
 
 //
@@ -66,7 +66,7 @@ typedef unsigned char AdvancedfxBool;
 
 typedef unsigned char AdvancedfxUInt8;
 
-#define ADVANCEDFX_UINT8_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x5760F402,0xCF8D,0x436F,0xB38A,0x0B,0x34,0x0E,0xE4,0x53,0x6C)
+#define AdvancedfxUInt8_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x5760F402,0xCF8D,0x436F,0xB38A,0x0B,0x34,0x0E,0xE4,0x53,0x6C)
 
 
 //
@@ -74,7 +74,7 @@ typedef unsigned char AdvancedfxUInt8;
 
 typedef unsigned long AdvancedfxUInt32;
 
-#define ADVANCEDFX_UINT32_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x2C0330F6,0xEBD2,0x4C4B,0xAB0F,0x57,0x22,0x08,0x0C,0x59,0x92)
+#define AdvancedfxUInt32_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x2C0330F6,0xEBD2,0x4C4B,0xAB0F,0x57,0x22,0x08,0x0C,0x59,0x92)
 
 
 //
@@ -82,7 +82,7 @@ typedef unsigned long AdvancedfxUInt32;
 
 typedef signed long AdvancedfxInt32;
 
-#define ADVANCEDFX_INT32_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0xBA19A48B,0x6780,0x4391,0x84A5,0x38,0x3D,0x8C,0x55,0xD9,0x0B)
+#define AdvancedfxInt32_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0xBA19A48B,0x6780,0x4391,0x84A5,0x38,0x3D,0x8C,0x55,0xD9,0x0B)
 
 
 //
@@ -94,7 +94,7 @@ typedef unsigned __int64 AdvancedfxSize;
 typedef unsigned int AdvancedfxSize;
 #endif
 
-#define ADVANCEDFX_SIZE_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x0C5AFAAD,0xF01F,0x4D60,0x8051,0x86,0xC9,0xBE,0x78,0xFE,0xEF)
+#define AdvancedfxSize_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x0C5AFAAD,0xF01F,0x4D60,0x8051,0x86,0xC9,0xBE,0x78,0xFE,0xEF)
 
 
 //
@@ -102,13 +102,17 @@ typedef unsigned int AdvancedfxSize;
 
 typedef const char* AdvancedfxCString;
 
-#define ADVANCEDFX_CSTRING_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x9C6932EB,0x17A1,0x49C0,0xA484,0x59,0x08,0xEB,0x59,0xB8,0x69)
+#define AdvancedfxCString_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x9C6932EB,0x17A1,0x49C0,0xA484,0x59,0x08,0xEB,0x59,0xB8,0x69)
+
+typedef void (*AdvancedfxCString_Set)(AdvancedfxCString value);
 
 
 //
 // AdvancedfxFloat
 
 typedef float AdvancedfxFloat;
+
+#define AdvancedfxFloat_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x271da19, 0xc021, 0x43c3, 0xb0, 0xc9, 0xc6, 0xd9, 0xb5, 0x98, 0x48, 0xd9)
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -137,7 +141,7 @@ struct AdvancedfxUuid
 	AdvancedfxUInt8 uc0;
 };
 
-#define ADVANCEDFX_UUID_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x9A58B3EA,0xB183,0x44DE,0x8B92,0x3F,0x7D,0xF1,0x25,0x7F,0xF7)
+#define AdvancedfxUuid_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn,0x9A58B3EA,0xB183,0x44DE,0x8B92,0x3F,0x7D,0xF1,0x25,0x7F,0xF7)
 
 
 //
@@ -150,33 +154,67 @@ struct AdvancedfxVersion {
 	AdvancedfxUInt32 build;
 };
 
+#define AdvancedfxVersion_UUID_FN(fn) ADVANCEDFX_UUID_APPLY_FN(fn, 0x2b5d73af, 0xc50b, 0x4182, 0x8c, 0xee, 0xc4, 0x9f, 0xc9, 0x6d, 0xa5, 0xa0)
 
 
-// Process types ///////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
 
-typedef void* (*AdvancedfxProcessGet)(
-	AdvancedfxUInt8 uuidF,
-	AdvancedfxUInt8 uuidE,
-	AdvancedfxUInt8 uuidD,
-	AdvancedfxUInt8 uuidC,
-	AdvancedfxUInt8 uuidB,
-	AdvancedfxUInt8 uuidA,
-	AdvancedfxUInt8 uuid9,
-	AdvancedfxUInt8 uuid8,
-	AdvancedfxUInt8 uuid7,
-	AdvancedfxUInt8 uuid6,
-	AdvancedfxUInt8 uuid5,
-	AdvancedfxUInt8 uuid4,
-	AdvancedfxUInt8 uuid3,
-	AdvancedfxUInt8 uuid2,
-	AdvancedfxUInt8 uuid1,
-	AdvancedfxUInt8 uuid0);
+struct AdvancedfxEventClass {
 
+	void (*AddRef)(void * This);
+	
+	void (*Release)(void * This);
 
-// Module types ////////////////////////////////////////////////////////////////
+	void (*Trigger)(void * This);
+}:
 
-typedef void (*AdvancedfxModuleInit)(AdvancedfxProcessGet processGet);
+struct AdvancedfxStringClass {
+	void (*AddRef)(void * This);
+	
+	void (*Release)(void * This);
 
+	AdvancedfxCString (*Get)(void * This);
 
+	AdvancedfxBool (*Set)(void * This, AdvancedfxCString value);
+};
 
-#endif
+struct AdvancedfxFunctionClass {
+
+	void (*AddRef)(void * This);
+	
+	void (*Release)(void * This);
+
+	/**
+	 * @param event will remain strongly referenced by This.
+	 */
+	AdvancedfxBool (*DeletingAdd)(void * This, struct AdvancedfxEventClass ** event);
+
+	void (*DeletingRemove)(void * This, struct AdvancedfxEventClass ** event);
+
+	void (*Call)(void * This, void * arg);
+};
+
+struct AdvancedfxRegistryClass {
+
+	void (*AddRef)(void * This);
+
+	void (*Release)(void * This);
+
+	/**
+	 * @param event will remain strongly referenced by This.
+	 */
+	AdvancedfxBool (*DeletingAdd)(void * This, struct AdvancedfxEventClass ** event);
+
+	void (*DeletingRemove)(void * This, struct AdvancedfxEventClass ** event);
+
+	/**
+	 * @param function will remain strongly referenced by This.
+	 */
+	AdvancedfxBool (*AddFunction)(void * This, struct AdvancedfxUuid * uuid, struct AdvancedfxFunctionClass ** function);
+
+	void (*RemoveFunction)(void * This, struct AdvancedfxUuid * uuid);
+
+	struct AdvancedfxFunctionClass ** (*GetFunction)(void * This, struct AdvancedfxUuid * uuid);
+};
+
+#endif // ADVANCEDFX_TYPES_H
