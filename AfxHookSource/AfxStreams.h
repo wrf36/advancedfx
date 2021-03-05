@@ -65,8 +65,6 @@ public:
 
 	virtual bool ViewRenderShouldForceNoVis(bool orgValue) = 0;
 
-	virtual void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable) = 0;
-
 	//
 	// General state:
 
@@ -134,16 +132,16 @@ public:
 	//
 	// Reference counting:
 
-	virtual int AddRef(bool mutex = false) override
+	virtual int AddRef(bool keepLocked = false) override
 	{
 		AFXSTREAMS_REFTRACKER_INC
 
-		return CAfxThreadedRefCounted::AddRef(mutex);
+		return CAfxThreadedRefCounted::AddRef(keepLocked);
 	}
 
-	virtual int Release(bool mutex = false) override
+	virtual int Release(bool isLocked = false) override
 	{
-		int result = CAfxThreadedRefCounted::Release(mutex);
+		int result = CAfxThreadedRefCounted::Release(isLocked);
 
 		AFXSTREAMS_REFTRACKER_DEC
 
@@ -1279,8 +1277,6 @@ public:
 
 	virtual void OnRenderEnd(void) override;
 
-	void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable);
-
 	void Console_ActionFilter_Add(const char * expression, CAction * action);
 	void Console_ActionFilter_AddEx(CAfxStreams * streams, IWrpCommandArgs * args);
 	void Console_ActionFilter_Print(void);
@@ -1935,6 +1931,22 @@ private:
 
 		virtual void D3d9HooksFloat4ParamOverride(float color[4]) override
 		{
+			if(IDirect3DDevice9 * device = AfxGetDirect3DDevice9())
+			{
+				DWORD value;
+				if(SUCCEEDED(device->GetRenderState(D3DRS_STENCILENABLE, &value)))
+				{
+					if(value)
+					{
+						// Stencil active.
+
+						// Edge case for cut-out mask.
+						return; // we don't want to tamper with the mask.
+					}
+
+				}
+			}
+
 			if (1 == m_DebugColor)
 			{
 				color[3] = 1;
@@ -1946,17 +1958,27 @@ private:
 				color[2] = color[3];
 				color[3] = 1;
 			}
-			else if (color[3] == 0.0f)
-			{
-				// Edge case for cut-out mask.
-			}
-			else if (color[3] == 1.0f && color[2] == 1.0f && color[1] == 1.0f && color[0] == 1.0f)
-			{
-				// Edge case for cut-out mask.
-			}
 			else
 			{
-				RemapColor(color[0], color[1], color[2], color[3]);
+				float fac = color[3];
+				if (m_Normalize && fac)
+				{
+					color[0] /= fac;
+					color[1] /= fac;
+					color[2] /= fac;
+					color[3] = 1;
+
+					RemapColor(color[0], color[1], color[2], color[3]);
+
+					color[0] *= fac;
+					color[1] *= fac;
+					color[2] *= fac;
+					color[3] = fac;
+				}
+				else
+				{
+					RemapColor(color[0], color[1], color[2], color[3]);
+				}
 			}
 		}
 
@@ -1984,6 +2006,7 @@ private:
 
 		std::shared_timed_mutex m_EditMutex;
 		int m_DebugColor = 0;
+		bool m_Normalize = false;
 		std::queue<CAfxColorLut::CRgba> m_Queue;
 		std::map<CAfxColorLut::CRgba, CRecentEntry> m_Cache;
 		CAfxColorLut* m_AfxColorLut = nullptr;
@@ -2309,12 +2332,10 @@ private:
 			, m_Stream(stream)
 		{
 			m_MapRleaseNotification = new CMapRleaseNotification(this);
-			m_Stream->AddRef();
 		}
 
 		~CAfxBaseFxStreamContext()
 		{
-			m_Stream->Release();
 			delete m_MapRleaseNotification;
 		}
 
@@ -2344,8 +2365,6 @@ private:
 		// IAfxStreamContext:
 
 		virtual bool ViewRenderShouldForceNoVis(bool orgValue);
-
-		virtual void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable) override;
 
 		virtual void DrawingHudBegin(void);
 
@@ -2599,13 +2618,13 @@ private:
 
 		CAction* RetrieveAction(const CAfxTrackedMaterialRef& trackedMaterial, const CEntityInfo& currentEntity);
 
-		void IfRootThenUpdateCurrentEntity()
+		void IfRootThenUpdateCurrentEntity(void *proxyData)
 		{
 			IAfxMatRenderContext* rootContext = m_RootContext;
 
 			if (rootContext && rootContext == GetCurrentContext())
 			{
-				m_Stream->UpdateCurrentEntity();
+				m_Stream->UpdateCurrentEntity(proxyData);
 			}
 		}
 	};
@@ -2614,7 +2633,7 @@ private:
 
 	SOURCESDK::CSGO::CBaseHandle m_CurrentEntity = SOURCESDK_CSGO_INVALID_EHANDLE_INDEX;
 
-	void UpdateCurrentEntity();
+	void UpdateCurrentEntity(void* proxyData);
 
 	bool m_DebugPrint;
 
@@ -3266,8 +3285,6 @@ public:
 
 	bool DrawPhiGrid = false;
 	bool DrawRuleOfThirds = false;
-
-	virtual void SetClientRenderable(SOURCESDK::IClientRenderable_csgo * renderable);
 
 	void BeforeFrameStart()
 	{
