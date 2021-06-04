@@ -32,7 +32,6 @@ string(REPLACE "\\" "/" VS16_MSBUILD ${VS16_MSBUILD})
 include(FetchContent)
 include(ExternalProject)
 
-add_subdirectory("AfxHook")
 add_subdirectory("deps/release/zlib")
 add_subdirectory("deps/release/protobuf")
 add_subdirectory("deps/release/openexr")
@@ -107,7 +106,7 @@ install(
 )
 install(
     FILES
-        "${afxhook_BINARY_DIR}/AfxHook.dat"
+        "${injector_BINARY_DIR}/AfxHook.dat"
     DESTINATION "bin"
 )
 
@@ -129,7 +128,7 @@ install(
 )
 install(
     FILES
-        "${afxhook_BINARY_DIR}/x64/AfxHook.dat"
+        "${injector_BINARY_DIR}/x64/AfxHook.dat"
     DESTINATION "bin/x64"
 )
 install(
